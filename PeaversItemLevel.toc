@@ -1,4 +1,4 @@
-## Interface: 110107
+## Interface: 110205
 ## Title: |cff3abdf7Peavers|rItemLevel
 ## Notes: Displays player item levels in a movable frame
 ## IconTexture: Interface\AddOns\PeaversCommons\src\Media\Icon.tga
