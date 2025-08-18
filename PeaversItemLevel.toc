@@ -3,7 +3,7 @@
 ## Notes: Displays player item levels in a movable frame
 ## IconTexture: Interface\AddOns\PeaversCommons\src\Media\Icon.tga
 ## Author: Peavers
-## Version: 1.0.28
+## Version: 1.0.29
 ## X-Curse-Project-ID: 1239246
 ## Dependencies: PeaversCommons
 ## SavedVariables: PeaversItemLevelDB
