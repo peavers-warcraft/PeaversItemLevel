@@ -1,32 +1,32 @@
-## Interface: 110205
+## Interface: 120000, 120001
+
 ## Title: |cff3abdf7Peavers|rItemLevel
 ## Notes: Displays player item levels in a movable frame
-## IconTexture: Interface\AddOns\PeaversCommons\src\Media\Icon.tga
 ## Author: Peavers
 ## Version: 1.0.29
-## X-Curse-Project-ID: 1239246
-## Dependencies: PeaversCommons
-## SavedVariables: PeaversItemLevelDB
+
+## IconTexture: Interface\AddOns\PeaversCommons\src\Media\Icon.tga
 ## Category-enUS: Peavers
 
-# Main
+## X-Website: https://peavers.io
+## X-Source-Code: https://github.com/peavers-warcraft/PeaversItemLevel
+## X-Curse-Project-ID: 1239246
+
+## Dependencies: PeaversCommons
+## SavedVariables: PeaversItemLevelDB
+
 src\Main.lua
 
-# UI first (since Config depends on it)
 src\UI\UI.lua
 
-# Players
 src\Players.lua
 
-# Utils
 src\Utils\Utils.lua
 src\Utils\Config.lua
 src\Utils\ConfigUI.lua
 
-# UI components needed by Core
 src\UI\StatBar.lua
 src\UI\TitleBar.lua
 src\UI\BarManager.lua
 
-# Core
 src\Core\Core.lua

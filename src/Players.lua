@@ -21,6 +21,14 @@ Players.CLASS_COLORS = {
 -- Player order (will be sorted by item level)
 Players.PLAYER_ORDER = {}
 
+-- Combat cache for handling WoW 12.0.1 "secrets" system
+-- Item level APIs may return secret values during combat that cannot be compared
+Players.combatCache = {
+    itemLevels = {},
+    highestItemLevel = 0,
+    playerItemLevel = 0,
+}
+
 -- Initialize player tracking
 function Players:Initialize()
     -- Clear the player order
@@ -61,26 +69,29 @@ function Players:ScanGroup()
     end
 
     -- Sort players based on configuration
-    if PIL.Config.sortOption == "ILVL_DESC" then
-        -- Sort by item level (highest to lowest)
-        table.sort(self.PLAYER_ORDER, function(a, b)
-            return self:GetItemLevel(a) > self:GetItemLevel(b)
-        end)
-    elseif PIL.Config.sortOption == "ILVL_ASC" then
-        -- Sort by item level (lowest to highest)
-        table.sort(self.PLAYER_ORDER, function(a, b)
-            return self:GetItemLevel(a) < self:GetItemLevel(b)
-        end)
-    elseif PIL.Config.sortOption == "NAME_DESC" then
-        -- Sort alphabetically by name (Z to A)
-        table.sort(self.PLAYER_ORDER, function(a, b)
-            return UnitName(a) > UnitName(b)
-        end)
-    else
-        -- Default: Sort alphabetically by name (A to Z)
-        table.sort(self.PLAYER_ORDER, function(a, b)
-            return UnitName(a) < UnitName(b)
-        end)
+    -- Skip sorting during combat to avoid secret value comparison errors (WoW 12.0.1)
+    if not InCombatLockdown() then
+        if PIL.Config.sortOption == "ILVL_DESC" then
+            -- Sort by item level (highest to lowest)
+            table.sort(self.PLAYER_ORDER, function(a, b)
+                return self:GetItemLevel(a) > self:GetItemLevel(b)
+            end)
+        elseif PIL.Config.sortOption == "ILVL_ASC" then
+            -- Sort by item level (lowest to highest)
+            table.sort(self.PLAYER_ORDER, function(a, b)
+                return self:GetItemLevel(a) < self:GetItemLevel(b)
+            end)
+        elseif PIL.Config.sortOption == "NAME_DESC" then
+            -- Sort alphabetically by name (Z to A)
+            table.sort(self.PLAYER_ORDER, function(a, b)
+                return UnitName(a) > UnitName(b)
+            end)
+        else
+            -- Default: Sort alphabetically by name (A to Z)
+            table.sort(self.PLAYER_ORDER, function(a, b)
+                return UnitName(a) < UnitName(b)
+            end)
+        end
     end
 
     -- Queue all players for inspection to ensure item levels are updated
@@ -118,15 +129,27 @@ end
 function Players:GetItemLevel(unit)
     if not unit then return 0 end
 
+    -- During combat, return cached values only to avoid secret value comparison errors
+    if InCombatLockdown() then
+        if UnitIsUnit(unit, "player") then
+            return self.combatCache.playerItemLevel or 0
+        end
+        return self.combatCache.itemLevels[unit] or 0
+    end
+
     -- For the player, use the GetAverageItemLevel API
     if UnitIsUnit(unit, "player") then
         local _, equipped = GetAverageItemLevel()
+        -- Cache for combat use
+        self.combatCache.playerItemLevel = equipped
         return equipped
     end
 
     -- For other players, we need to use the inspect system
     -- Check if we have cached data
     if self.cachedItemLevels and self.cachedItemLevels[unit] then
+        -- Also update combat cache
+        self.combatCache.itemLevels[unit] = self.cachedItemLevels[unit]
         return self.cachedItemLevels[unit]
     else
         -- Request inspect if possible
@@ -173,6 +196,11 @@ end
 
 -- Process the inspect queue
 function Players:ProcessInspectQueue(elapsed)
+    -- Skip inspections during combat to avoid secret value errors (WoW 12.0.1)
+    if InCombatLockdown() then
+        return
+    end
+
     if not self.inspectQueue or #self.inspectQueue == 0 then
         -- No more units to inspect, stop the process
         self.inspectFrame:SetScript("OnUpdate", nil)
@@ -209,6 +237,11 @@ end
 -- Handle INSPECT_READY event
 function Players:OnInspectReady(event, guid)
     if event ~= "INSPECT_READY" then return end
+
+    -- Skip processing during combat to avoid secret value errors (WoW 12.0.1)
+    if InCombatLockdown() then
+        return
+    end
 
     -- Find the unit with this GUID
     local unit = nil
@@ -251,6 +284,9 @@ function Players:OnInspectReady(event, guid)
             self.cachedItemLevels = {}
         end
         self.cachedItemLevels[unit] = equipped
+
+        -- Also update combat cache
+        self.combatCache.itemLevels[unit] = equipped
 
         -- Update bars with proper sorting
         PIL.BarManager:UpdateBarsWithSorting()
@@ -319,6 +355,11 @@ end
 
 -- Gets the highest item level in the group
 function Players:GetHighestItemLevel()
+    -- During combat, return cached highest item level to avoid secret value errors
+    if InCombatLockdown() then
+        return math.max(1, self.combatCache.highestItemLevel or 0)
+    end
+
     local highestItemLevel = 0
 
     -- Check all players in the group
@@ -328,6 +369,9 @@ function Players:GetHighestItemLevel()
             highestItemLevel = itemLevel
         end
     end
+
+    -- Update combat cache
+    self.combatCache.highestItemLevel = highestItemLevel
 
     -- Ensure we always return at least 1 to avoid division by zero
     return math.max(1, highestItemLevel)
@@ -350,6 +394,31 @@ function Players:CalculateBarValues(value)
     percentValue = math.max(percentValue, 1)
 
     return percentValue
+end
+
+-- Updates the combat cache with fresh values (called after combat ends)
+function Players:UpdateCombatCache()
+    -- Refresh player's own item level
+    local _, equipped = GetAverageItemLevel()
+    self.combatCache.playerItemLevel = equipped
+
+    -- Refresh cached item levels for all group members
+    self.combatCache.itemLevels = {}
+    for _, unit in ipairs(self.PLAYER_ORDER) do
+        if self.cachedItemLevels and self.cachedItemLevels[unit] then
+            self.combatCache.itemLevels[unit] = self.cachedItemLevels[unit]
+        end
+    end
+
+    -- Refresh highest item level
+    local highestItemLevel = 0
+    for _, unit in ipairs(self.PLAYER_ORDER) do
+        local itemLevel = self:GetItemLevel(unit)
+        if itemLevel > highestItemLevel then
+            highestItemLevel = itemLevel
+        end
+    end
+    self.combatCache.highestItemLevel = highestItemLevel
 end
 
 return Players

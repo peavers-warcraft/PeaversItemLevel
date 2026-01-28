@@ -197,16 +197,22 @@ function BarManager:UpdateAllBars(forceUpdate, noAnimation)
 		self.previousValues = {}
 	end
 
+	local inCombat = InCombatLockdown()
+
 	-- Track if any player's item level has changed
 	local anyValueChanged = false
 	local highestItemLevelChanged = false
-	local previousHighestItemLevel = PIL.Players.previousHighestItemLevel or 0
-	local currentHighestItemLevel = PIL.Players:GetHighestItemLevel()
 
-	-- Check if the highest item level has changed
-	if currentHighestItemLevel ~= previousHighestItemLevel then
-		highestItemLevelChanged = true
-		PIL.Players.previousHighestItemLevel = currentHighestItemLevel
+	-- Skip highest item level change detection during combat to avoid secret value errors
+	if not inCombat then
+		local previousHighestItemLevel = PIL.Players.previousHighestItemLevel or 0
+		local currentHighestItemLevel = PIL.Players:GetHighestItemLevel()
+
+		-- Check if the highest item level has changed
+		if currentHighestItemLevel ~= previousHighestItemLevel then
+			highestItemLevelChanged = true
+			PIL.Players.previousHighestItemLevel = currentHighestItemLevel
+		end
 	end
 
 	-- First pass: Check if any values have changed
@@ -218,10 +224,13 @@ function BarManager:UpdateAllBars(forceUpdate, noAnimation)
 			self.previousValues[unit] = 0
 		end
 
-		if value ~= self.previousValues[unit] then
-			anyValueChanged = true
-			-- Store the new value for next comparison
-			self.previousValues[unit] = value
+		-- Skip value comparisons during combat to avoid secret value errors
+		if not inCombat then
+			if value ~= self.previousValues[unit] then
+				anyValueChanged = true
+				-- Store the new value for next comparison
+				self.previousValues[unit] = value
+			end
 		end
 
 		-- Always update the name text to ensure it's visible
@@ -235,7 +244,15 @@ function BarManager:UpdateAllBars(forceUpdate, noAnimation)
 	end
 
 	-- Second pass: Update bars as needed
-	if anyValueChanged or highestItemLevelChanged or forceUpdate then
+	-- During combat, always display cached values without animation
+	if inCombat then
+		for _, bar in ipairs(self.bars) do
+			local unit = bar.statType
+			local value = PIL.Players:GetItemLevel(unit)
+			bar:Update(value, nil, 0, true) -- noAnimation = true during combat
+			bar:UpdateColor()
+		end
+	elseif anyValueChanged or highestItemLevelChanged or forceUpdate then
 		-- If the highest item level changes, update all bars at once with noAnimation
 		-- to prevent staggered flashing
 		local useNoAnimation = noAnimation or highestItemLevelChanged
@@ -351,6 +368,13 @@ end
 -- This function will either update the existing bars or recreate them
 -- depending on the current configuration
 function BarManager:UpdateBarsWithSorting(forceUpdate)
+	-- During combat, skip full sorting and just update values
+	-- This avoids secret value comparison errors (WoW 12.0.1)
+	if InCombatLockdown() then
+		self:UpdateAllBars(forceUpdate, true)
+		return
+	end
+
 	-- Always ensure proper order regardless of sort option
 	-- Resort the players
 	PIL.Players:ScanGroup()

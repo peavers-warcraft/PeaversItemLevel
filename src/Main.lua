@@ -108,6 +108,9 @@ PeaversCommons.Events:Init(addonName, function()
 	PeaversCommons.Events:RegisterEvent("PLAYER_REGEN_ENABLED", function()
 		PIL.Core.inCombat = false
 		PIL.Core:UpdateFrameVisibility()
+		-- Refresh combat cache and trigger full bar update with sorting after combat ends
+		PIL.Players:UpdateCombatCache()
+		PIL.BarManager:UpdateBarsWithSorting(true)
 	end)
 
 	PeaversCommons.Events:RegisterEvent("PLAYER_LOGOUT", function()
