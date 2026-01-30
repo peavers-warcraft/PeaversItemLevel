@@ -1,5 +1,8 @@
 local addonName, PIL = ...
 
+-- Debouncing state for equipment updates
+local pendingEquipmentUpdate = false
+
 -- Check for PeaversCommons
 local PeaversCommons = _G.PeaversCommons
 if not PeaversCommons then
@@ -84,17 +87,35 @@ PeaversCommons.Events:Init(addonName, function()
 
 	PeaversCommons.Events:RegisterEvent("UNIT_NAME_UPDATE", function(event, unit)
 		if unit and (UnitInParty(unit) or UnitInRaid(unit)) then
-			PIL.BarManager:UpdateBarsWithSorting(true) -- Force update to refresh names
+			-- Only update the specific bar's name, not full recreation
+			local bar = PIL.BarManager:GetBar(unit)
+			if bar then
+				local playerName = PIL.Players:GetName(unit)
+				if bar.name ~= playerName then
+					bar.name = playerName
+					bar:UpdateNameText()
+				end
+			end
 		end
 	end)
 
-	PeaversCommons.Events:RegisterEvent("UNIT_INVENTORY_CHANGED", function()
-		PIL.BarManager:UpdateBarsWithSorting()
-	end)
+	-- Debounced equipment update handler to avoid multiple updates per gear change
+	local function ScheduleEquipmentUpdate()
+		if pendingEquipmentUpdate then return end
+		pendingEquipmentUpdate = true
 
-	PeaversCommons.Events:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", function()
-		PIL.BarManager:UpdateBarsWithSorting()
-	end)
+		-- Debounce: wait 0.5s for all equipment events to settle
+		C_Timer.After(0.5, function()
+			pendingEquipmentUpdate = false
+			if not InCombatLockdown() then
+				PIL.BarManager:UpdateBarsWithSorting()
+			end
+		end)
+	end
+
+	PeaversCommons.Events:RegisterEvent("UNIT_INVENTORY_CHANGED", ScheduleEquipmentUpdate)
+
+	PeaversCommons.Events:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", ScheduleEquipmentUpdate)
 
 	PeaversCommons.Events:RegisterEvent("INSPECT_READY", function()
 		PIL.BarManager:UpdateBarsWithSorting()

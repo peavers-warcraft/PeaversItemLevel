@@ -29,6 +29,31 @@ Players.combatCache = {
     playerItemLevel = 0,
 }
 
+-- Helper function to get effective item level with backward compatibility
+function Players:GetEffectiveItemLevel(itemLink)
+    if not itemLink then return nil end
+
+    -- Try the newer C_Item namespace first (preferred for TWW+)
+    if C_Item and C_Item.GetDetailedItemLevelInfo then
+        local effectiveILvl = C_Item.GetDetailedItemLevelInfo(itemLink)
+        if effectiveILvl and effectiveILvl > 0 then
+            return effectiveILvl
+        end
+    end
+
+    -- Fallback to the older global function
+    if GetDetailedItemLevelInfo then
+        local effectiveILvl = GetDetailedItemLevelInfo(itemLink)
+        if effectiveILvl and effectiveILvl > 0 then
+            return effectiveILvl
+        end
+    end
+
+    -- Final fallback to GetItemInfo base item level (legacy compatibility)
+    local _, _, _, itemLevel = GetItemInfo(itemLink)
+    return itemLevel
+end
+
 -- Initialize player tracking
 function Players:Initialize()
     -- Clear the player order
@@ -71,16 +96,25 @@ function Players:ScanGroup()
     -- Sort players based on configuration
     -- Skip sorting during combat to avoid secret value comparison errors (WoW 12.0.1)
     if not InCombatLockdown() then
-        if PIL.Config.sortOption == "ILVL_DESC" then
-            -- Sort by item level (highest to lowest)
-            table.sort(self.PLAYER_ORDER, function(a, b)
-                return self:GetItemLevel(a) > self:GetItemLevel(b)
-            end)
-        elseif PIL.Config.sortOption == "ILVL_ASC" then
-            -- Sort by item level (lowest to highest)
-            table.sort(self.PLAYER_ORDER, function(a, b)
-                return self:GetItemLevel(a) < self:GetItemLevel(b)
-            end)
+        if PIL.Config.sortOption == "ILVL_DESC" or PIL.Config.sortOption == "ILVL_ASC" then
+            -- Pre-cache item levels to avoid repeated API calls during sort
+            -- This reduces GetItemLevel calls from O(n log n) to O(n)
+            local cachedLevels = {}
+            for _, unit in ipairs(self.PLAYER_ORDER) do
+                cachedLevels[unit] = self:GetItemLevel(unit)
+            end
+
+            if PIL.Config.sortOption == "ILVL_DESC" then
+                -- Sort by item level (highest to lowest)
+                table.sort(self.PLAYER_ORDER, function(a, b)
+                    return (cachedLevels[a] or 0) > (cachedLevels[b] or 0)
+                end)
+            else
+                -- Sort by item level (lowest to highest)
+                table.sort(self.PLAYER_ORDER, function(a, b)
+                    return (cachedLevels[a] or 0) < (cachedLevels[b] or 0)
+                end)
+            end
         elseif PIL.Config.sortOption == "NAME_DESC" then
             -- Sort alphabetically by name (Z to A)
             table.sort(self.PLAYER_ORDER, function(a, b)
@@ -170,67 +204,92 @@ end
 function Players:QueueInspect(unit)
     if not self.inspectQueue then
         self.inspectQueue = {}
+        self.inspectQueueSet = {}  -- Hash set for O(1) lookup
     end
 
-    -- Add to queue if not already queued
-    local alreadyQueued = false
-    for _, queuedUnit in ipairs(self.inspectQueue) do
-        if queuedUnit == unit then
-            alreadyQueued = true
-            break
-        end
+    -- O(1) lookup instead of O(n) linear search
+    if self.inspectQueueSet[unit] then
+        return
     end
 
-    if not alreadyQueued then
-        table.insert(self.inspectQueue, unit)
-    end
+    table.insert(self.inspectQueue, unit)
+    self.inspectQueueSet[unit] = true
 
-    -- Start the inspection process if not already running
+    -- Create the event frame if it doesn't exist (for INSPECT_READY)
     if not self.inspectFrame then
         self.inspectFrame = CreateFrame("Frame")
-        self.inspectFrame:SetScript("OnUpdate", function(self, elapsed)
-            Players:ProcessInspectQueue(elapsed)
-        end)
+    end
+
+    -- Start processing queue with C_Timer (more efficient than OnUpdate)
+    if not self.inspectTimerRunning then
+        self.inspectTimerRunning = true
+        self:ScheduleNextInspect()
     end
 end
 
--- Process the inspect queue
-function Players:ProcessInspectQueue(elapsed)
-    -- Skip inspections during combat to avoid secret value errors (WoW 12.0.1)
+-- Schedule the next inspection using C_Timer (avoids OnUpdate overhead)
+function Players:ScheduleNextInspect()
+    -- Calculate delay: 1.5s between inspects, or immediate if enough time passed
+    local delay = 1.5
+    if self.lastInspect then
+        local elapsed = GetTime() - self.lastInspect
+        delay = math.max(0.1, 1.5 - elapsed)
+    end
+
+    C_Timer.After(delay, function()
+        self:ProcessNextInspect()
+    end)
+end
+
+-- Process the next unit in the inspect queue
+function Players:ProcessNextInspect()
+    -- Skip inspections during combat
     if InCombatLockdown() then
-        return
-    end
-
-    if not self.inspectQueue or #self.inspectQueue == 0 then
-        -- No more units to inspect, stop the process
-        self.inspectFrame:SetScript("OnUpdate", nil)
-        return
-    end
-
-    -- Check if we're ready to inspect
-    if not self.lastInspect or GetTime() - self.lastInspect > 1.5 then
-        local unit = self.inspectQueue[1]
-
-        -- Remove from queue
-        table.remove(self.inspectQueue, 1)
-
-        -- Check if unit still exists
-        if UnitExists(unit) and CanInspect(unit) and (not InspectFrame or (InspectFrame and not InspectFrame:IsShown())) then
-            -- Inspect the unit
-            NotifyInspect(unit)
-
-            -- Register for INSPECT_READY event if not already registered
-            if not self.inspectEventRegistered then
-                self.inspectEventRegistered = true
-                self.inspectFrame:RegisterEvent("INSPECT_READY")
-                self.inspectFrame:SetScript("OnEvent", function(self, event, guid)
-                    Players:OnInspectReady(event, guid)
-                end)
+        -- Retry after combat
+        C_Timer.After(1.0, function()
+            if self.inspectQueue and #self.inspectQueue > 0 then
+                self:ProcessNextInspect()
+            else
+                self.inspectTimerRunning = false
             end
+        end)
+        return
+    end
 
-            -- Record the time
-            self.lastInspect = GetTime()
+    -- Check if queue is empty
+    if not self.inspectQueue or #self.inspectQueue == 0 then
+        self.inspectTimerRunning = false
+        return
+    end
+
+    -- Get next unit
+    local unit = self.inspectQueue[1]
+    table.remove(self.inspectQueue, 1)
+    if self.inspectQueueSet then
+        self.inspectQueueSet[unit] = nil
+    end
+
+    -- Process this unit if valid
+    if UnitExists(unit) and CanInspect(unit) and (not InspectFrame or not InspectFrame:IsShown()) then
+        NotifyInspect(unit)
+
+        -- Register for INSPECT_READY event if not already registered
+        if not self.inspectEventRegistered then
+            self.inspectEventRegistered = true
+            self.inspectFrame:RegisterEvent("INSPECT_READY")
+            self.inspectFrame:SetScript("OnEvent", function(frame, event, guid)
+                Players:OnInspectReady(event, guid)
+            end)
         end
+
+        self.lastInspect = GetTime()
+    end
+
+    -- Schedule next inspection if queue not empty
+    if #self.inspectQueue > 0 then
+        self:ScheduleNextInspect()
+    else
+        self.inspectTimerRunning = false
     end
 end
 
@@ -253,44 +312,77 @@ function Players:OnInspectReady(event, guid)
     end
 
     if unit then
-        -- Get the item level for the inspected unit
         local equipped = 0
 
-        -- Use the inspect API to get item levels
-        -- Loop through all equipped items and calculate average
-        local totalIlvl = 0
-        local itemCount = 0
+        -- Use the official API for inspected unit item level (TWW+)
+        -- This properly handles 2H weapons, empty slots, etc.
+        if C_PaperDollInfo and C_PaperDollInfo.GetInspectItemLevel then
+            equipped = C_PaperDollInfo.GetInspectItemLevel(unit) or 0
+        end
 
-        for i = 1, 17 do  -- Check all equipment slots
-            if i ~= 4 then  -- Skip shirt slot
-                local itemLink = GetInventoryItemLink(unit, i)
-                if itemLink then
-                    local _, _, _, itemLevel = GetItemInfo(itemLink)
-                    if itemLevel and itemLevel > 0 then
-                        totalIlvl = totalIlvl + itemLevel
-                        itemCount = itemCount + 1
+        -- Fallback: manual calculation if API unavailable or returns 0
+        if equipped == 0 then
+            local totalIlvl = 0
+            local itemCount = 0
+
+            -- Equipment slots: 1-3 (head, neck, shoulder), 5-17 (chest through offhand)
+            -- Skip slot 4 (shirt) as it doesn't contribute to item level
+            for i = 1, 17 do
+                if i ~= 4 then
+                    local itemLink = GetInventoryItemLink(unit, i)
+                    if itemLink then
+                        local itemLevel = self:GetEffectiveItemLevel(itemLink)
+                        if itemLevel and itemLevel > 0 then
+                            totalIlvl = totalIlvl + itemLevel
+                            itemCount = itemCount + 1
+                        end
                     end
                 end
             end
+
+            -- Calculate average if we found any items
+            if itemCount > 0 then
+                equipped = totalIlvl / itemCount
+            end
         end
 
-        -- Calculate average if we found any items
-        if itemCount > 0 then
-            equipped = totalIlvl / itemCount
-        end
-
-        -- Cache the item level
+        -- Initialize cache table if needed
         if not self.cachedItemLevels then
             self.cachedItemLevels = {}
         end
-        self.cachedItemLevels[unit] = equipped
 
-        -- Also update combat cache
-        self.combatCache.itemLevels[unit] = equipped
+        -- Only cache if we got valid data
+        -- This prevents overwriting good cached data with 0
+        if equipped > 0 then
+            self.cachedItemLevels[unit] = equipped
+            -- Also update combat cache
+            self.combatCache.itemLevels[unit] = equipped
 
-        -- Update bars with proper sorting
-        PIL.BarManager:UpdateBarsWithSorting()
+            -- Update just this specific bar (fast path)
+            local bar = PIL.BarManager:GetBar(unit)
+            if bar then
+                bar:Update(equipped, nil, nil, true)
+            end
+
+            -- Schedule a debounced full sort update
+            -- This batches multiple inspections into one sort operation
+            self:ScheduleDebouncedSort()
+        end
     end
+end
+
+-- Debounced sort update - batches multiple inspection results
+function Players:ScheduleDebouncedSort()
+    if self.pendingSortUpdate then return end
+    self.pendingSortUpdate = true
+
+    -- Wait for inspections to settle before sorting (1 second debounce)
+    C_Timer.After(1.0, function()
+        self.pendingSortUpdate = false
+        if not InCombatLockdown() then
+            PIL.BarManager:UpdateBarsWithSorting()
+        end
+    end)
 end
 
 -- Returns the color for a specific player class

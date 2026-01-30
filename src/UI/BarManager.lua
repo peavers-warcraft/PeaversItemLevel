@@ -198,9 +198,6 @@ function BarManager:UpdateAllBars(forceUpdate, noAnimation)
 	end
 
 	local inCombat = InCombatLockdown()
-
-	-- Track if any player's item level has changed
-	local anyValueChanged = false
 	local highestItemLevelChanged = false
 
 	-- Skip highest item level change detection during combat to avoid secret value errors
@@ -208,77 +205,49 @@ function BarManager:UpdateAllBars(forceUpdate, noAnimation)
 		local previousHighestItemLevel = PIL.Players.previousHighestItemLevel or 0
 		local currentHighestItemLevel = PIL.Players:GetHighestItemLevel()
 
-		-- Check if the highest item level has changed
 		if currentHighestItemLevel ~= previousHighestItemLevel then
 			highestItemLevelChanged = true
 			PIL.Players.previousHighestItemLevel = currentHighestItemLevel
 		end
 	end
 
-	-- First pass: Check if any values have changed
+	-- Use noAnimation if highest changed (prevents staggered flashing)
+	local useNoAnimation = noAnimation or highestItemLevelChanged
+
+	-- Single pass: update bars that need updating
 	for _, bar in ipairs(self.bars) do
-		local unit = bar.statType -- In our case, statType is the unit ID
+		local unit = bar.statType
 		local value = PIL.Players:GetItemLevel(unit)
+		local previousValue = self.previousValues[unit] or 0
 
-		if not self.previousValues[unit] then
-			self.previousValues[unit] = 0
-		end
-
-		-- Skip value comparisons during combat to avoid secret value errors
-		if not inCombat then
-			if value ~= self.previousValues[unit] then
-				anyValueChanged = true
-				-- Store the new value for next comparison
-				self.previousValues[unit] = value
-			end
-		end
-
-		-- Always update the name text to ensure it's visible
+		-- Check for name changes (rare, but handle it)
 		local playerName = PIL.Players:GetName(unit)
 		if bar.name ~= playerName then
 			bar.name = playerName
-			bar.frame.nameText:SetText(playerName)
-			-- Call UpdateNameText to handle truncation after updating the name
 			bar:UpdateNameText()
 		end
-	end
 
-	-- Second pass: Update bars as needed
-	-- During combat, always display cached values without animation
-	if inCombat then
-		for _, bar in ipairs(self.bars) do
-			local unit = bar.statType
-			local value = PIL.Players:GetItemLevel(unit)
-			bar:Update(value, nil, 0, true) -- noAnimation = true during combat
-			bar:UpdateColor()
-		end
-	elseif anyValueChanged or highestItemLevelChanged or forceUpdate then
-		-- If the highest item level changes, update all bars at once with noAnimation
-		-- to prevent staggered flashing
-		local useNoAnimation = noAnimation or highestItemLevelChanged
+		-- Determine if this bar needs updating
+		local valueChanged = (value ~= previousValue)
+		local needsUpdate = forceUpdate or highestItemLevelChanged or (valueChanged and not inCombat)
 
-		for _, bar in ipairs(self.bars) do
-			local unit = bar.statType
-			local value = PIL.Players:GetItemLevel(unit)
-			local valueChanged = (self.previousValues[unit] and value ~= self.previousValues[unit])
+		if inCombat then
+			-- During combat: always update with cached values, no animation
+			bar:Update(value, nil, 0, true)
+		elseif needsUpdate then
+			-- Calculate change for display
+			local change = valueChanged and (value - previousValue) or 0
+			bar:Update(value, nil, change, useNoAnimation)
 
-			-- Only update the bar if:
-			-- 1. This specific bar's value has changed, OR
-			-- 2. The highest item level has changed (affects percentage calculations), OR
-			-- 3. A force update is requested
-			if valueChanged or highestItemLevelChanged or forceUpdate then
-				-- Calculate the change in value (for display purposes)
-				local change = 0
-				if valueChanged then
-					change = value - self.previousValues[unit]
-				end
-
-				-- Update the bar with the new value and change, passing noAnimation parameter
-				bar:Update(value, nil, change, useNoAnimation)
-
-				-- Ensure the color is properly applied when updating
+			-- Only update color on force update (class colors don't change otherwise)
+			if forceUpdate then
 				bar:UpdateColor()
 			end
+		end
+
+		-- Store value for next comparison (skip during combat)
+		if not inCombat and valueChanged then
+			self.previousValues[unit] = value
 		end
 	end
 end

@@ -327,12 +327,29 @@ function StatBar:UpdateNameText()
 
     -- Only truncate if necessary and we have space to show something
     if nameWidth > availableWidth and availableWidth > 10 then
-        local truncatedName = fullName
         local ellipsis = "..."
 
-        -- Gradually reduce the name until it fits with ellipsis
-        while (self.frame.nameText:GetStringWidth(truncatedName) + self.frame.nameText:GetStringWidth(ellipsis)) > availableWidth and #truncatedName > 1 do
-            truncatedName = string.sub(truncatedName, 1, #truncatedName - 1)
+        -- Performance optimization: use estimation instead of character-by-character loop
+        -- This reduces GetStringWidth calls from O(n) to O(1)
+        self.frame.nameText:SetText(ellipsis)
+        local ellipsisWidth = self.frame.nameText:GetStringWidth()
+        local targetWidth = availableWidth - ellipsisWidth
+
+        if targetWidth <= 0 then
+            self.frame.nameText:SetText(ellipsis)
+            return
+        end
+
+        -- Estimate characters that fit using average width ratio
+        local avgCharWidth = nameWidth / #fullName
+        local estimatedChars = math.floor(targetWidth / avgCharWidth)
+        estimatedChars = math.max(1, math.min(estimatedChars, #fullName - 1))
+
+        -- Single adjustment pass (at most 1 extra GetStringWidth call)
+        local truncatedName = string.sub(fullName, 1, estimatedChars)
+        self.frame.nameText:SetText(truncatedName)
+        if self.frame.nameText:GetStringWidth() > targetWidth and estimatedChars > 1 then
+            truncatedName = string.sub(fullName, 1, estimatedChars - 1)
         end
 
         self.frame.nameText:SetText(truncatedName .. ellipsis)
