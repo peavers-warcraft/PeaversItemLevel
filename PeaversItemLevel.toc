@@ -3,7 +3,7 @@
 ## Title: |cff3abdf7Peavers|rItemLevel
 ## Notes: Displays player item levels in a movable frame
 ## Author: Peavers
-## Version: 1.0.37
+## Version: 1.0.38
 
 ## IconTexture: Interface\AddOns\PeaversCommons\src\Media\Icon.tga
 ## Category-enUS: Peavers
