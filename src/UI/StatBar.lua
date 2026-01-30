@@ -383,3 +383,33 @@ function StatBar:Destroy()
 		self.frame:SetScript("OnLeave", nil)
 	end
 end
+
+-- Reset the bar for pool reuse
+function StatBar:Reset(parent, name, unit)
+	self.name = name
+	self.statType = unit
+	self.value = 0
+
+	-- Reparent and show the frame
+	self.frame:SetParent(parent)
+	self.frame:Show()
+
+	-- Update visuals
+	self:UpdateNameText()
+	self:UpdateColor()
+
+	-- Stop any running animations
+	if self.animationGroup then
+		self.animationGroup:Stop()
+	end
+
+	-- Reset bar value
+	self.frame.bar:SetValue(0)
+end
+
+-- Hide the bar (for pool release)
+function StatBar:Hide()
+	if self.frame then
+		self.frame:Hide()
+	end
+end

@@ -893,12 +893,45 @@ end
 
 -- Opens the configuration panel
 function ConfigUI:OpenOptions()
-    -- Use the direct registration category and subcategory names
-    if PIL.directCategory and PIL.directSettingsCategory then
-        Settings.OpenToCategory(PIL.directSettingsCategory)
-    else
-        -- Fallback: try to open directly using the name
-        Settings.OpenToCategory("PeaversItemLevel")
+    -- Ensure settings are saved before opening
+    PIL.Config:Save()
+
+    if Settings and Settings.OpenToCategory then
+        -- Try using the category ID stored by PeaversCommons.SettingsUI
+        -- Prefer opening to the settings subcategory if available
+        if PIL.directSettingsCategoryID then
+            local success = pcall(Settings.OpenToCategory, PIL.directSettingsCategoryID)
+            if success then return end
+        end
+
+        -- Fallback to main category ID
+        if PIL.directCategoryID then
+            local success = pcall(Settings.OpenToCategory, PIL.directCategoryID)
+            if success then return end
+        end
+
+        -- Try with category objects as fallback
+        if PIL.directSettingsCategory then
+            local success = pcall(Settings.OpenToCategory, PIL.directSettingsCategory)
+            if success then return end
+        end
+
+        if PIL.directCategory then
+            local success = pcall(Settings.OpenToCategory, PIL.directCategory)
+            if success then return end
+        end
+    end
+
+    -- Fallback: just open the Settings panel
+    if SettingsPanel then
+        ShowUIPanel(SettingsPanel)
+        return
+    end
+
+    -- Legacy fallback for older clients
+    if InterfaceOptionsFrame_OpenToCategory then
+        InterfaceOptionsFrame_OpenToCategory("PeaversItemLevel")
+        InterfaceOptionsFrame_OpenToCategory("PeaversItemLevel")
     end
 end
 

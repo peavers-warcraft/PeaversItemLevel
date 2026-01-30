@@ -4,11 +4,11 @@ local addonName, PIL = ...
 PIL.BarManager = {}
 local BarManager = PIL.BarManager
 
--- Collection to store all created bars
-BarManager.bars = {}
-
 -- Collection to store role headers
 BarManager.roleHeaders = {}
+
+-- Previous values cache for change detection
+BarManager.previousValues = {}
 
 -- Creates a role header with the same style as the titlebar
 function BarManager:CreateRoleHeader(parent, role, yOffset, avgItemLevel)
@@ -88,19 +88,19 @@ function BarManager:CreateRoleHeader(parent, role, yOffset, avgItemLevel)
     return header
 end
 
--- Creates or recreates all player bars
-function BarManager:CreateBars(parent)
-    -- Clear existing bars
-    for _, bar in ipairs(self.bars) do
-        bar.frame:Hide()
-    end
-    self.bars = {}
+-- Rebuild all bars from scratch using the BarPool
+function BarManager:RebuildBars()
+    -- Release all existing bars back to the pool
+    PIL.BarPool:ReleaseAll()
 
-    -- Clear existing role headers
-    for role, header in pairs(self.roleHeaders) do
+    -- Clear role headers
+    for _, header in pairs(self.roleHeaders) do
         header.frame:Hide()
     end
     self.roleHeaders = {}
+
+    local parent = PIL.Core.contentFrame
+    if not parent then return 0 end
 
     local yOffset = 0
 
@@ -113,8 +113,8 @@ function BarManager:CreateBars(parent)
         }
 
         -- Sort players into role groups
-        for _, unit in ipairs(PIL.Players.PLAYER_ORDER) do
-            local role = PIL.Players:GetRole(unit)
+        for _, unit in ipairs(PIL.PlayerData.playerOrder) do
+            local role = PIL.PlayerData:GetRole(unit)
             table.insert(playersByRole[role], unit)
         end
 
@@ -127,7 +127,7 @@ function BarManager:CreateBars(parent)
             -- Only create a header if there are players with this role
             if #players > 0 then
                 -- Calculate average item level for this role group
-                local avgItemLevel = PIL.Players:CalculateAverageItemLevel(players)
+                local avgItemLevel = PIL.PlayerData:CalculateAverageItemLevel(players)
 
                 -- Create role header with average item level
                 local header = self:CreateRoleHeader(parent, role, yOffset, avgItemLevel)
@@ -141,20 +141,15 @@ function BarManager:CreateBars(parent)
 
                 -- Create bars for players in this role
                 for _, unit in ipairs(players) do
-                    local playerName = PIL.Players:GetName(unit)
-                    local bar = PIL.StatBar:New(parent, playerName, unit)
+                    local playerName = PIL.PlayerData:GetName(unit)
+                    local bar = PIL.BarPool:Acquire(parent, playerName, unit)
                     bar:SetPosition(0, yOffset)
 
-                    local itemLevel = PIL.Players:GetItemLevel(unit)
-                    -- Pass true for noAnimation to prevent flashing during initial creation
+                    local itemLevel = PIL.PlayerData:GetItemLevel(unit)
                     bar:Update(itemLevel, nil, nil, true)
-
-                    -- Ensure the color is properly applied
                     bar:UpdateColor()
 
-                    table.insert(self.bars, bar)
-
-                    -- When barSpacing is 0, position bars exactly barHeight pixels apart
+                    -- Update yOffset
                     if PIL.Config.barSpacing == 0 then
                         yOffset = yOffset - PIL.Config.barHeight
                     else
@@ -164,22 +159,17 @@ function BarManager:CreateBars(parent)
             end
         end
     else
-        -- Original behavior without role grouping
-        for _, unit in ipairs(PIL.Players.PLAYER_ORDER) do
-            local playerName = PIL.Players:GetName(unit)
-            local bar = PIL.StatBar:New(parent, playerName, unit)
+        -- Non-grouped layout
+        for _, unit in ipairs(PIL.PlayerData.playerOrder) do
+            local playerName = PIL.PlayerData:GetName(unit)
+            local bar = PIL.BarPool:Acquire(parent, playerName, unit)
             bar:SetPosition(0, yOffset)
 
-            local itemLevel = PIL.Players:GetItemLevel(unit)
-            -- Pass true for noAnimation to prevent flashing during initial creation
+            local itemLevel = PIL.PlayerData:GetItemLevel(unit)
             bar:Update(itemLevel, nil, nil, true)
-
-            -- Ensure the color is properly applied
             bar:UpdateColor()
 
-            table.insert(self.bars, bar)
-
-            -- When barSpacing is 0, position bars exactly barHeight pixels apart
+            -- Update yOffset
             if PIL.Config.barSpacing == 0 then
                 yOffset = yOffset - PIL.Config.barHeight
             else
@@ -188,85 +178,161 @@ function BarManager:CreateBars(parent)
         end
     end
 
+    -- Adjust frame height
+    PIL.Core:AdjustFrameHeight()
+
     return math.abs(yOffset)
+end
+
+-- Reorder existing bars without recreating them
+function BarManager:ReorderBars()
+    -- If grouping by role, we need a full rebuild
+    if PIL.Config.groupByRole then
+        self:RebuildBars()
+        return
+    end
+
+    local yOffset = 0
+    for _, unit in ipairs(PIL.PlayerData.playerOrder) do
+        local bar = PIL.BarPool:GetBar(unit)
+        if bar then
+            -- Update name if changed
+            local playerName = PIL.PlayerData:GetName(unit)
+            if bar.name ~= playerName then
+                bar.name = playerName
+                bar:UpdateNameText()
+            end
+
+            bar:SetPosition(0, yOffset)
+
+            -- Update value without animation during reordering
+            local itemLevel = PIL.PlayerData:GetItemLevel(unit)
+            bar:Update(itemLevel, nil, nil, true)
+
+            if PIL.Config.barSpacing == 0 then
+                yOffset = yOffset - PIL.Config.barHeight
+            else
+                yOffset = yOffset - (PIL.Config.barHeight + PIL.Config.barSpacing)
+            end
+        end
+    end
+
+    PIL.Core:AdjustFrameHeight()
 end
 
 -- Updates all player bars with latest item levels
 function BarManager:UpdateAllBars(forceUpdate, noAnimation)
-	if not self.previousValues then
-		self.previousValues = {}
-	end
+    local inCombat = InCombatLockdown()
+    local highestItemLevelChanged = false
 
-	local inCombat = InCombatLockdown()
-	local highestItemLevelChanged = false
+    -- Skip highest item level change detection during combat
+    if not inCombat then
+        local previousHighestItemLevel = self.previousHighestItemLevel or 0
+        local currentHighestItemLevel = PIL.PlayerData:GetHighestItemLevel()
 
-	-- Skip highest item level change detection during combat to avoid secret value errors
-	if not inCombat then
-		local previousHighestItemLevel = PIL.Players.previousHighestItemLevel or 0
-		local currentHighestItemLevel = PIL.Players:GetHighestItemLevel()
+        if currentHighestItemLevel ~= previousHighestItemLevel then
+            highestItemLevelChanged = true
+            self.previousHighestItemLevel = currentHighestItemLevel
+        end
+    end
 
-		if currentHighestItemLevel ~= previousHighestItemLevel then
-			highestItemLevelChanged = true
-			PIL.Players.previousHighestItemLevel = currentHighestItemLevel
-		end
-	end
+    -- Use noAnimation if highest changed (prevents staggered flashing)
+    local useNoAnimation = noAnimation or highestItemLevelChanged
 
-	-- Use noAnimation if highest changed (prevents staggered flashing)
-	local useNoAnimation = noAnimation or highestItemLevelChanged
+    -- Update all bars in the pool
+    for _, unit in ipairs(PIL.PlayerData.playerOrder) do
+        local bar = PIL.BarPool:GetBar(unit)
+        if bar then
+            local value = PIL.PlayerData:GetItemLevel(unit)
+            local previousValue = self.previousValues[unit] or 0
 
-	-- Single pass: update bars that need updating
-	for _, bar in ipairs(self.bars) do
-		local unit = bar.statType
-		local value = PIL.Players:GetItemLevel(unit)
-		local previousValue = self.previousValues[unit] or 0
+            -- Check for name changes
+            local playerName = PIL.PlayerData:GetName(unit)
+            if bar.name ~= playerName then
+                bar.name = playerName
+                bar:UpdateNameText()
+            end
 
-		-- Check for name changes (rare, but handle it)
-		local playerName = PIL.Players:GetName(unit)
-		if bar.name ~= playerName then
-			bar.name = playerName
-			bar:UpdateNameText()
-		end
+            -- Determine if this bar needs updating
+            local valueChanged = (value ~= previousValue)
+            local needsUpdate = forceUpdate or highestItemLevelChanged or (valueChanged and not inCombat)
 
-		-- Determine if this bar needs updating
-		local valueChanged = (value ~= previousValue)
-		local needsUpdate = forceUpdate or highestItemLevelChanged or (valueChanged and not inCombat)
+            if inCombat then
+                -- During combat: always update with cached values, no animation
+                bar:Update(value, nil, 0, true)
+            elseif needsUpdate then
+                local change = valueChanged and (value - previousValue) or 0
+                bar:Update(value, nil, change, useNoAnimation)
 
-		if inCombat then
-			-- During combat: always update with cached values, no animation
-			bar:Update(value, nil, 0, true)
-		elseif needsUpdate then
-			-- Calculate change for display
-			local change = valueChanged and (value - previousValue) or 0
-			bar:Update(value, nil, change, useNoAnimation)
+                if forceUpdate then
+                    bar:UpdateColor()
+                end
+            end
 
-			-- Only update color on force update (class colors don't change otherwise)
-			if forceUpdate then
-				bar:UpdateColor()
-			end
-		end
+            -- Store value for next comparison (skip during combat)
+            if not inCombat and valueChanged then
+                self.previousValues[unit] = value
+            end
+        end
+    end
 
-		-- Store value for next comparison (skip during combat)
-		if not inCombat and valueChanged then
-			self.previousValues[unit] = value
-		end
-	end
+    -- Update role header average item levels if grouped
+    if PIL.Config.groupByRole then
+        self:UpdateRoleHeaderAverages()
+    end
+end
+
+-- Update role header average item levels
+function BarManager:UpdateRoleHeaderAverages()
+    local playersByRole = {
+        ["TANK"] = {},
+        ["HEALER"] = {},
+        ["DAMAGER"] = {}
+    }
+
+    for _, unit in ipairs(PIL.PlayerData.playerOrder) do
+        local role = PIL.PlayerData:GetRole(unit)
+        table.insert(playersByRole[role], unit)
+    end
+
+    for role, players in pairs(playersByRole) do
+        local header = self.roleHeaders[role]
+        if header and header.avgIlvlText and #players > 0 then
+            local avgItemLevel = PIL.PlayerData:CalculateAverageItemLevel(players)
+            local formattedAvgIlvl = string.format("%.1f", avgItemLevel or 0)
+            header.avgIlvlText:SetText("avg " .. formattedAvgIlvl)
+        end
+    end
 end
 
 -- Resizes all bars based on current configuration
 function BarManager:ResizeBars()
-    for _, bar in ipairs(self.bars) do
-        bar:UpdateHeight()
-        bar:UpdateWidth()
-        bar:UpdateTexture()
-        bar:UpdateFont()
-        bar:UpdateBackgroundOpacity()
-        bar:InitTooltip() -- Reinitialize tooltips to ensure they're correctly set up
+    for _, unit in ipairs(PIL.PlayerData.playerOrder) do
+        local bar = PIL.BarPool:GetBar(unit)
+        if bar then
+            bar:UpdateHeight()
+            bar:UpdateWidth()
+            bar:UpdateTexture()
+            bar:UpdateFont()
+            bar:UpdateBackgroundOpacity()
+            bar:InitTooltip()
+        end
     end
 
-    -- Return the total height of all bars for frame adjustment
-    local totalHeight = #self.bars * PIL.Config.barHeight
-    if PIL.Config.barSpacing > 0 then
-        totalHeight = totalHeight + (#self.bars - 1) * PIL.Config.barSpacing
+    -- Rebuild to recalculate positions
+    self:RebuildBars()
+end
+
+-- Adjusts the frame height based on number of bars and title bar visibility
+function BarManager:AdjustFrameHeight(frame, contentFrame, titleBarVisible)
+    local barCount = PIL.BarPool:GetInUseCount()
+    local contentHeight
+
+    -- When barSpacing is 0, calculate height without spacing
+    if PIL.Config.barSpacing == 0 then
+        contentHeight = barCount * PIL.Config.barHeight
+    else
+        contentHeight = barCount * (PIL.Config.barHeight + PIL.Config.barSpacing) - PIL.Config.barSpacing
     end
 
     -- Add height for role headers if grouping by role is enabled
@@ -276,28 +342,15 @@ function BarManager:ResizeBars()
             headerCount = headerCount + 1
         end
 
-        -- Each header is 20 pixels tall
-        totalHeight = totalHeight + (headerCount * 20)
+        contentHeight = contentHeight + (headerCount * 20)
 
-        -- Add spacing between headers and bars if barSpacing is enabled
         if PIL.Config.barSpacing > 0 then
-            totalHeight = totalHeight + (headerCount * PIL.Config.barSpacing)
+            contentHeight = contentHeight + (headerCount * PIL.Config.barSpacing)
         end
     end
 
-    return totalHeight
-end
-
--- Adjusts the frame height based on number of bars and title bar visibility
-function BarManager:AdjustFrameHeight(frame, contentFrame, titleBarVisible)
-    local barCount = #self.bars
-    local contentHeight
-
-    -- When barSpacing is 0, calculate height without spacing
-    if PIL.Config.barSpacing == 0 then
-        contentHeight = barCount * PIL.Config.barHeight
-    else
-        contentHeight = barCount * (PIL.Config.barHeight + PIL.Config.barSpacing) - PIL.Config.barSpacing
+    if contentHeight <= 0 then
+        contentHeight = 0
     end
 
     if contentHeight == 0 then
@@ -313,138 +366,43 @@ function BarManager:AdjustFrameHeight(frame, contentFrame, titleBarVisible)
             frame:SetHeight(contentHeight) -- Just content
         end
     end
-
-    -- Content frame position is managed by Core:UpdateTitleBarVisibility
-    -- to avoid duplicate repositioning that could cause UI glitches
 end
 
--- Gets a bar by its unit ID
+-- Gets a bar by its unit ID (delegates to BarPool)
 function BarManager:GetBar(unit)
-    for _, bar in ipairs(self.bars) do
-        if bar.statType == unit then
-            return bar
-        end
-    end
-    return nil
+    return PIL.BarPool:GetBar(unit)
 end
 
 -- Gets the number of visible bars
 function BarManager:GetBarCount()
-    return #self.bars
+    return PIL.BarPool:GetInUseCount()
 end
 
--- Updates bars with proper sorting
--- This function will either update the existing bars or recreate them
--- depending on the current configuration
+-- Backward compatibility: CreateBars delegates to RebuildBars
+function BarManager:CreateBars(parent)
+    return self:RebuildBars()
+end
+
+-- Backward compatibility: UpdateBarsWithSorting delegates to appropriate methods
 function BarManager:UpdateBarsWithSorting(forceUpdate)
-	-- During combat, skip full sorting and just update values
-	-- This avoids secret value comparison errors (WoW 12.0.1)
-	if InCombatLockdown() then
-		self:UpdateAllBars(forceUpdate, true)
-		return
-	end
+    -- During combat, skip full sorting
+    if InCombatLockdown() then
+        self:UpdateAllBars(forceUpdate, true)
+        return
+    end
 
-	-- Always ensure proper order regardless of sort option
-	-- Resort the players
-	PIL.Players:ScanGroup()
-
-	-- Check if we have any "Unknown" names that need updating
-	local hasUnknownPlayers = false
-	for _, unit in ipairs(PIL.Players.PLAYER_ORDER) do
-		local playerName = PIL.Players:GetName(unit)
-		if playerName == "Unknown" then
-			hasUnknownPlayers = true
-			break
-		end
-	end
-
-	-- If we have unknown players or no bars yet, do a full rebuild
-	if hasUnknownPlayers or #self.bars == 0 or forceUpdate or PIL.Config.groupByRole then
-		if PIL.Core and PIL.Core.contentFrame then
-			self:CreateBars(PIL.Core.contentFrame)
-			PIL.Core:AdjustFrameHeight()
-		end
-		return
-	end
-
-	-- Create a temporary mapping of unit to bar
-	local barsByUnit = {}
-	for _, bar in ipairs(self.bars) do
-		barsByUnit[bar.statType] = bar
-	end
-
-	-- Clear the bar collection but don't destroy the actual bar frames
-	local oldBars = self.bars
-	self.bars = {}
-
-	-- Reposition bars according to new player order
-	local yOffset = 0
-	for _, unit in ipairs(PIL.Players.PLAYER_ORDER) do
-		local bar = barsByUnit[unit]
-		if bar then
-			-- Update the name in case it changed
-			local playerName = PIL.Players:GetName(unit)
-			if bar.name ~= playerName then
-				bar.name = playerName
-				bar.frame.nameText:SetText(playerName)
-				-- Call UpdateNameText to handle truncation after updating the name
-				bar:UpdateNameText()
-			end
-
-			-- Add this bar back to our collection in the correct order
-			table.insert(self.bars, bar)
-
-			-- Position bar at the correct offset
-			bar:SetPosition(0, yOffset)
-
-			-- Update value without animation during sorting
-			local itemLevel = PIL.Players:GetItemLevel(unit)
-			bar:Update(itemLevel, nil, nil, true) -- noAnimation = true
-
-			-- Ensure the color is properly applied
-			bar:UpdateColor()
-
-			-- When barSpacing is 0, position bars exactly barHeight pixels apart
-			if PIL.Config.barSpacing == 0 then
-				yOffset = yOffset - PIL.Config.barHeight
-			else
-				yOffset = yOffset - (PIL.Config.barHeight + PIL.Config.barSpacing)
-			end
-		else
-			-- Create a new bar for this unit
-			local playerName = PIL.Players:GetName(unit)
-			local newBar = PIL.StatBar:New(PIL.Core.contentFrame, playerName, unit)
-			newBar:SetPosition(0, yOffset)
-
-			local itemLevel = PIL.Players:GetItemLevel(unit)
-			-- Pass true for noAnimation to prevent flashing
-			newBar:Update(itemLevel, nil, nil, true)
-
-			-- Ensure the color is properly applied
-			newBar:UpdateColor()
-
-			table.insert(self.bars, newBar)
-
-			-- When barSpacing is 0, position bars exactly barHeight pixels apart
-			if PIL.Config.barSpacing == 0 then
-				yOffset = yOffset - PIL.Config.barHeight
-			else
-				yOffset = yOffset - (PIL.Config.barHeight + PIL.Config.barSpacing)
-			end
-		end
-	end
-
-	-- Hide any bars that aren't in the current player list
-	for _, bar in ipairs(oldBars) do
-		if not tContains(PIL.Players.PLAYER_ORDER, bar.statType) then
-			bar.frame:Hide()
-		end
-	end
-
-	-- Adjust the frame height after reordering
-	if PIL.Core then
-		PIL.Core:AdjustFrameHeight()
-	end
+    -- Use UpdateCoordinator if available
+    if PIL.UpdateCoordinator then
+        if forceUpdate then
+            PIL.UpdateCoordinator:ScheduleUpdate("fullRebuild")
+        else
+            PIL.UpdateCoordinator:ScheduleUpdate("sortRequired")
+        end
+    else
+        -- Fallback direct handling
+        PIL.PlayerData:ScanGroup()
+        self:RebuildBars()
+    end
 end
 
 return BarManager

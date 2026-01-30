@@ -7,8 +7,11 @@ Core.inCombat = false
 
 -- Sets up the addon's main frame and components
 function Core:Initialize()
-	-- Initialize player tracking
-	PIL.Players:Initialize()
+	-- PlayerData is already initialized by Main.lua before this is called
+	-- Initialize Players module for backward compatibility
+	if PIL.Players and PIL.Players.Initialize then
+		PIL.Players:Initialize()
+	end
 
 	self.frame = CreateFrame("Frame", "PeaversItemLevelFrame", UIParent, "BackdropTemplate")
 	self.frame:SetSize(PIL.Config.frameWidth, PIL.Config.frameHeight)

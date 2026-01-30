@@ -19,6 +19,7 @@ src\Main.lua
 
 src\UI\UI.lua
 
+src\Core\PlayerData.lua
 src\Players.lua
 
 src\Utils\Utils.lua
@@ -26,7 +27,9 @@ src\Utils\Config.lua
 src\Utils\ConfigUI.lua
 
 src\UI\StatBar.lua
+src\Core\BarPool.lua
 src\UI\TitleBar.lua
 src\UI\BarManager.lua
 
+src\Core\UpdateCoordinator.lua
 src\Core\Core.lua
