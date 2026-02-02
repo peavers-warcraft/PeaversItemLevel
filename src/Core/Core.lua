@@ -55,27 +55,13 @@ end
 
 -- Enables or disables frame dragging based on lock setting
 function Core:UpdateFrameLock()
-	if PIL.Config.lockPosition then
-		self.frame:SetMovable(false)
-		self.frame:EnableMouse(true) -- Keep mouse enabled for tooltips
-		self.frame:RegisterForDrag("")
-		self.frame:SetScript("OnDragStart", nil)
-		self.frame:SetScript("OnDragStop", nil)
-	else
-		self.frame:SetMovable(true)
-		self.frame:EnableMouse(true)
-		self.frame:RegisterForDrag("LeftButton")
-		self.frame:SetScript("OnDragStart", self.frame.StartMoving)
-		self.frame:SetScript("OnDragStop", function(frame)
-			frame:StopMovingOrSizing()
-
-			local point, _, _, x, y = frame:GetPoint()
-			PIL.Config.framePoint = point
-			PIL.Config.frameX = x
-			PIL.Config.frameY = y
-			PIL.Config:Save()
-		end)
-	end
+	local PeaversCommons = _G.PeaversCommons
+	PeaversCommons.FrameLock:ApplyFromConfig(
+		self.frame,
+		nil,  -- No content frame dragging for PIL
+		PIL.Config,
+		function() PIL.Config:Save() end
+	)
 end
 
 -- Shows or hides the title bar and adjusts content frame accordingly

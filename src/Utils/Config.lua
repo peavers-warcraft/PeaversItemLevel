@@ -1,49 +1,60 @@
 local addonName, PIL = ...
 
--- Initialize Config namespace with default values
-PIL.Config = {
-	-- Frame settings
-	frameWidth = 250,
-	frameHeight = 300,
-	framePoint = "RIGHT",
-	frameX = -20,
-	frameY = 0,
-	lockPosition = false,
+-- Access PeaversCommons
+local PeaversCommons = _G.PeaversCommons
+local DefaultConfig = PeaversCommons and PeaversCommons.DefaultConfig
 
-	-- Bar settings
-	barWidth = 230,
-	barHeight = 20,
-	barSpacing = 2,
-	barBgAlpha = 0.7,
-	barAlpha = 1.0,
+-- Get defaults from PeaversCommons preset or use fallback
+local defaults
+if DefaultConfig then
+	defaults = DefaultConfig.FromPreset("PlayerBars")
+else
+	-- Fallback defaults if PeaversCommons not loaded yet
+	defaults = {
+		frameWidth = 250,
+		frameHeight = 300,
+		framePoint = "RIGHT",
+		frameX = -20,
+		frameY = 0,
+		lockPosition = false,
+		barWidth = 230,
+		barHeight = 20,
+		barSpacing = 2,
+		barBgAlpha = 0.7,
+		barAlpha = 1.0,
+		fontFace = "Fonts\\FRIZQT__.TTF",
+		fontSize = 8,
+		fontOutline = "OUTLINE",
+		fontShadow = false,
+		barTexture = "Interface\\TargetingFrame\\UI-StatusBar",
+		bgAlpha = 0.8,
+		bgColor = { r = 0, g = 0, b = 0 },
+		updateInterval = 0.5,
+		combatUpdateInterval = 0.2,
+		showOnLogin = true,
+		showTitleBar = true,
+		showStats = { ["ITEM_LEVEL"] = true },
+		customColors = {},
+		hideOutOfCombat = false,
+		ilvlStepPercentage = 2.0,
+		sortOption = "NAME_ASC",
+		groupByRole = false,
+		displayMode = "ALWAYS",
+	}
+end
 
-	-- Visual settings
-	fontFace = "Fonts\\FRIZQT__.TTF",
-	fontSize = 8,
-	fontOutline = "OUTLINE",
-	fontShadow = false,
-
-	-- Other settings
-	barTexture = "Interface\\TargetingFrame\\UI-StatusBar",
-	bgAlpha = 0.8,
-	bgColor = { r = 0, g = 0, b = 0 },
-	updateInterval = 0.5,
-	combatUpdateInterval = 0.2,
-	showOnLogin = true,
-	showTitleBar = true,
-	showStats = {},
-	customColors = {},
-	hideOutOfCombat = false, -- Hide the addon when out of combat
-	ilvlStepPercentage = 2.0, -- Percentage per item level difference for progress bar
-	sortOption = "NAME_ASC", -- Sorting option: ILVL_DESC, ILVL_ASC, NAME_ASC, NAME_DESC
-	groupByRole = false, -- Group players by their role (Tank, Healer, DPS)
-	displayMode = "ALWAYS" -- Display mode: ALWAYS, PARTY_ONLY, RAID_ONLY
-}
-
--- Initialize default showStats values
-PIL.Config.showStats = {
-    ["ITEM_LEVEL"] = true
-}
+-- Initialize Config namespace with default values from preset
+PIL.Config = {}
+for key, value in pairs(defaults) do
+	if type(value) == "table" then
+		PIL.Config[key] = {}
+		for k, v in pairs(value) do
+			PIL.Config[key][k] = v
+		end
+	else
+		PIL.Config[key] = value
+	end
+end
 
 local Config = PIL.Config
 
@@ -187,80 +198,36 @@ end
 
 -- Returns a sorted table of available fonts, including those from LibSharedMedia
 function Config:GetFonts()
+	local PeaversCommons = _G.PeaversCommons
+	if PeaversCommons and PeaversCommons.DefaultConfig then
+		return PeaversCommons.DefaultConfig.GetFonts()
+	end
+
+	-- Fallback
 	local fonts = {
 		["Fonts\\ARIALN.TTF"] = "Arial Narrow",
 		["Fonts\\FRIZQT__.TTF"] = "Default",
 		["Fonts\\MORPHEUS.TTF"] = "Morpheus",
 		["Fonts\\SKURRI.TTF"] = "Skurri"
 	}
-
-	if LibStub and LibStub:GetLibrary("LibSharedMedia-3.0", true) then
-		local LSM = LibStub:GetLibrary("LibSharedMedia-3.0")
-		if LSM then
-			for name, path in pairs(LSM:HashTable("font")) do
-				fonts[path] = name
-			end
-		end
-	end
-
-	local sortedFonts = {}
-	for path, name in pairs(fonts) do
-		table.insert(sortedFonts, { path = path, name = name })
-	end
-
-	table.sort(sortedFonts, function(a, b)
-		return a.name < b.name
-	end)
-
-	local result = {}
-	for _, font in ipairs(sortedFonts) do
-		result[font.path] = font.name
-	end
-
-	return result
+	return fonts
 end
 
 -- Returns a sorted table of available statusbar textures from various sources
 function Config:GetBarTextures()
+	local PeaversCommons = _G.PeaversCommons
+	if PeaversCommons and PeaversCommons.DefaultConfig then
+		return PeaversCommons.DefaultConfig.GetBarTextures()
+	end
+
+	-- Fallback
 	local textures = {
 		["Interface\\TargetingFrame\\UI-StatusBar"] = "Default",
 		["Interface\\PaperDollInfoFrame\\UI-Character-Skills-Bar"] = "Skill Bar",
 		["Interface\\PVPFrame\\UI-PVP-Progress-Bar"] = "PVP Bar",
 		["Interface\\RaidFrame\\Raid-Bar-Hp-Fill"] = "Raid"
 	}
-
-	if LibStub and LibStub:GetLibrary("LibSharedMedia-3.0", true) then
-		local LSM = LibStub:GetLibrary("LibSharedMedia-3.0")
-		if LSM then
-			for name, path in pairs(LSM:HashTable("statusbar")) do
-				textures[path] = name
-			end
-		end
-	end
-
-	if _G.Details and _G.Details.statusbar_info then
-		for i, textureTable in ipairs(_G.Details.statusbar_info) do
-			if textureTable.file and textureTable.name then
-				textures[textureTable.file] = textureTable.name
-			end
-		end
-	end
-
-	local sortedTextures = {}
-	for path, name in pairs(textures) do
-		table.insert(sortedTextures, { path = path, name = name })
-	end
-
-	table.sort(sortedTextures, function(a, b)
-		return a.name < b.name
-	end)
-
-	local result = {}
-	for _, texture in ipairs(sortedTextures) do
-		result[texture.path] = texture.name
-	end
-
-	return result
+	return textures
 end
 
 -- Initialize the configuration when the addon loads

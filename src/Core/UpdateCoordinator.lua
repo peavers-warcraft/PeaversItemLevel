@@ -1,76 +1,39 @@
 local addonName, PIL = ...
 
--- Initialize UpdateCoordinator namespace for event batching
-PIL.UpdateCoordinator = {
-    pendingUpdates = {
-        fullRebuild = false,
-        sortRequired = false,
-        dataRefresh = false,
-    },
-    updateTimer = nil,
+--[[
+    PIL UpdateCoordinator - Now uses PeaversCommons.UpdateCoordinator as base
+
+    This file creates a PIL-specific coordinator that wraps PeaversCommons.UpdateCoordinator
+    with PIL-specific update handlers and event registration.
+]]
+
+local PeaversCommons = _G.PeaversCommons
+
+-- Create PIL's update coordinator using Commons
+PIL.UpdateCoordinator = PeaversCommons.UpdateCoordinator:New({
     debounceInterval = 0.1,
-}
+    combatBehavior = "dataRefreshOnly",
 
-local UpdateCoordinator = PIL.UpdateCoordinator
+    updateHandlers = {
+        fullRebuild = function()
+            PIL.PlayerData:ScanGroup()
+            PIL.PlayerData:CleanupCache()
+            PIL.BarManager:RebuildBars()
+        end,
 
--- Schedule an update of the specified type
-function UpdateCoordinator:ScheduleUpdate(updateType)
-    self.pendingUpdates[updateType] = true
+        sortRequired = function()
+            PIL.PlayerData:SortPlayerOrder()
+            PIL.BarManager:ReorderBars()
+        end,
 
-    -- Cancel existing timer if any
-    if self.updateTimer then
-        self.updateTimer:Cancel()
-    end
+        dataRefresh = function()
+            PIL.BarManager:UpdateAllBars()
+        end,
+    },
+})
 
-    -- Schedule new debounced update
-    self.updateTimer = C_Timer.NewTimer(self.debounceInterval, function()
-        self:ProcessUpdates()
-    end)
-end
-
--- Process all pending updates in priority order
-function UpdateCoordinator:ProcessUpdates()
-    self.updateTimer = nil
-
-    -- During combat, only allow data refresh
-    if InCombatLockdown() then
-        if self.pendingUpdates.dataRefresh then
-            PIL.BarManager:UpdateAllBars(false, true)
-            self.pendingUpdates.dataRefresh = false
-        end
-        return
-    end
-
-    -- Priority order: rebuild > sort > data
-    if self.pendingUpdates.fullRebuild then
-        PIL.PlayerData:ScanGroup()
-        PIL.PlayerData:CleanupCache()
-        PIL.BarManager:RebuildBars()
-        self:ClearAll()
-        return
-    end
-
-    if self.pendingUpdates.sortRequired then
-        PIL.PlayerData:SortPlayerOrder()
-        PIL.BarManager:ReorderBars()
-        self.pendingUpdates.sortRequired = false
-    end
-
-    if self.pendingUpdates.dataRefresh then
-        PIL.BarManager:UpdateAllBars()
-        self.pendingUpdates.dataRefresh = false
-    end
-end
-
--- Clear all pending updates
-function UpdateCoordinator:ClearAll()
-    self.pendingUpdates.fullRebuild = false
-    self.pendingUpdates.sortRequired = false
-    self.pendingUpdates.dataRefresh = false
-end
-
--- Initialize the event coordinator and register event handlers
-function UpdateCoordinator:Initialize()
+-- Initialize event handlers for PIL
+function PIL.UpdateCoordinator:Initialize()
     local Events = PeaversCommons.Events
 
     -- Group composition changed
@@ -103,21 +66,21 @@ function UpdateCoordinator:Initialize()
         self:ScheduleUpdate("dataRefresh")
     end)
 
-    -- Inspection completed (handled primarily by PlayerData, but trigger sort)
+    -- Inspection completed
     Events:RegisterEvent("INSPECT_READY", function()
-        -- PlayerData handles the actual data update
-        -- We just schedule a sort if needed
         self:ScheduleUpdate("sortRequired")
     end)
 
     -- Combat state changes
     Events:RegisterEvent("PLAYER_REGEN_DISABLED", function()
         PIL.Core.inCombat = true
+        self:SetCombatState(true)
         PIL.Core:UpdateFrameVisibility()
     end)
 
     Events:RegisterEvent("PLAYER_REGEN_ENABLED", function()
         PIL.Core.inCombat = false
+        self:SetCombatState(false)
         PIL.Core:UpdateFrameVisibility()
 
         -- Refresh combat cache and process any pending updates
@@ -139,4 +102,4 @@ function UpdateCoordinator:Initialize()
     end, "PIL_Update")
 end
 
-return UpdateCoordinator
+return PIL.UpdateCoordinator
