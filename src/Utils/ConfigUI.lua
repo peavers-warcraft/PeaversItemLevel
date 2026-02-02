@@ -57,6 +57,13 @@ function ConfigUI:InitializeOptions()
 	local _, newY = UI:CreateSeparator(content, baseSpacing, yPos)
 	yPos = newY - baseSpacing
 
+	-- 1.5. GLOBAL APPEARANCE SECTION
+	yPos = self:CreateGlobalAppearanceOptions(content, yPos, baseSpacing, sectionSpacing)
+
+	-- Add a separator between major sections
+	local _, newY = UI:CreateSeparator(content, baseSpacing, yPos)
+	yPos = newY - baseSpacing
+
 	-- 2. BAR APPEARANCE SECTION
 	yPos = self:CreateBarAppearanceOptions(content, yPos, baseSpacing, sectionSpacing)
 
@@ -332,6 +339,43 @@ function ConfigUI:CreateDisplayOptions(content, yPos, baseSpacing, sectionSpacin
 	yPos = yPos - 65
 
 	return yPos
+end
+
+-- 1.5. GLOBAL APPEARANCE
+function ConfigUI:CreateGlobalAppearanceOptions(content, yPos, baseSpacing, sectionSpacing)
+	baseSpacing = baseSpacing or 25
+
+	local PeaversCommons = _G.PeaversCommons
+	local ConfigUIUtils = PeaversCommons.ConfigUIUtils
+
+	-- Create the global appearance section using ConfigUIUtils helper
+	local _, newY = ConfigUIUtils.CreateGlobalAppearanceSection(
+		content,
+		"PeaversItemLevel",
+		PIL,
+		baseSpacing,
+		yPos,
+		function()
+			-- Refresh UI callback when global settings change
+			if PIL.BarManager and PIL.Core and PIL.Core.contentFrame then
+				PIL.BarManager:CreateBars(PIL.Core.contentFrame)
+				PIL.Core:AdjustFrameHeight()
+			end
+			if PIL.Core and PIL.Core.frame then
+				PIL.Core.frame:SetBackdropColor(
+					PIL.Config.bgColor.r,
+					PIL.Config.bgColor.g,
+					PIL.Config.bgColor.b,
+					PIL.Config.bgAlpha
+				)
+			end
+			if ConfigUI.RefreshUI then
+				ConfigUI:RefreshUI()
+			end
+		end
+	)
+
+	return newY
 end
 
 -- 2. BAR APPEARANCE - Everything related to the bars appearance and layout

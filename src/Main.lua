@@ -7,65 +7,42 @@ if not PeaversCommons then
     return
 end
 
--- Check for required PeaversCommons modules
-local requiredModules = {"Events", "SlashCommands", "Utils"}
-for _, module in ipairs(requiredModules) do
-    if not PeaversCommons[module] then
-        print("|cffff0000Error:|r " .. addonName .. " requires PeaversCommons." .. module .. " which is missing.")
-        return
-    end
-end
+local AddonInit = PeaversCommons.AddonInit
 
--- Initialize addon namespace and modules
-PIL = PIL or {}
-
--- Module namespaces
-PIL.Core = PIL.Core or {}
-PIL.UI = PIL.UI or {}
-PIL.Utils = PIL.Utils or {}
-PIL.Config = PIL.Config or {}
-PIL.Players = PIL.Players or {}
-
--- Version information
-local function getAddOnMetadata(name, key)
-    return C_AddOns.GetAddOnMetadata(name, key)
-end
-
-PIL.version = getAddOnMetadata(addonName, "Version") or "1.0.5"
-PIL.addonName = addonName
-PIL.name = addonName
-
--- Function to toggle the item level display
-function ToggleItemLevelDisplay()
-    if PIL.Core.frame:IsShown() then
-        PIL.Core.frame:Hide()
-    else
-        PIL.Core.frame:Show()
-    end
-end
-
--- Make the function globally accessible
-_G.ToggleItemLevelDisplay = ToggleItemLevelDisplay
-
--- Register slash commands
-PeaversCommons.SlashCommands:Register(addonName, "pil", {
-    default = function()
-        ToggleItemLevelDisplay()
-    end,
-    config = function()
-        -- Use the addon's own OpenOptions function
-        if PIL.ConfigUI and PIL.ConfigUI.OpenOptions then
-            PIL.ConfigUI:OpenOptions()
-        elseif PIL.Config and PIL.Config.OpenOptionsCommand then
-            PIL.Config.OpenOptionsCommand()
-        end
-    end,
+-- Setup addon using AddonInit helper
+local success = AddonInit:Setup(PIL, addonName, {
+    modules = {"Core", "UI", "Utils", "Config", "Players"},
+    slashCommand = "pil",
+    toggleFunctionName = "ToggleItemLevelDisplay",
+    extraSlashCommands = {}
 })
+
+if not success then return end
 
 -- Initialize addon using the PeaversCommons Events module
 PeaversCommons.Events:Init(addonName, function()
     -- Initialize configuration
     PIL.Config:Initialize()
+
+    -- Register with GlobalAppearance if using global appearance
+    if PIL.Config.useGlobalAppearance and PeaversCommons.GlobalAppearance then
+        PeaversCommons.GlobalAppearance:RegisterAddon("PeaversItemLevel", PIL.Config, function(key, value)
+            -- Refresh UI when global appearance changes
+            if PIL.BarManager and PIL.Core and PIL.Core.contentFrame then
+                PIL.BarManager:CreateBars(PIL.Core.contentFrame)
+                PIL.Core:AdjustFrameHeight()
+            end
+            -- Update frame background
+            if PIL.Core and PIL.Core.frame then
+                PIL.Core.frame:SetBackdropColor(
+                    PIL.Config.bgColor.r,
+                    PIL.Config.bgColor.g,
+                    PIL.Config.bgColor.b,
+                    PIL.Config.bgAlpha
+                )
+            end
+        end)
+    end
 
     -- Initialize configuration UI
     if PIL.ConfigUI and PIL.ConfigUI.Initialize then
@@ -77,36 +54,56 @@ PeaversCommons.Events:Init(addonName, function()
         PIL.Patrons:Initialize()
     end
 
-    -- Initialize player data cache
-    PIL.PlayerData:ScanGroup()
-
-    -- Initialize core components (creates UI)
+    -- Initialize core components
     PIL.Core:Initialize()
 
-    -- Initialize the update coordinator (registers all events)
-    PIL.UpdateCoordinator:Initialize()
+    -- Register common events (logout save, combat visibility, group updates)
+    AddonInit:RegisterCommonEvents(PIL)
 
-    -- Show frame if configured to show on login
-    if PIL.Config.showOnLogin then
-        PIL.Core.frame:Show()
-    else
-        PIL.Core.frame:Hide()
-    end
-
-    -- Use the centralized SettingsUI system from PeaversCommons
-    C_Timer.After(0.5, function()
-        -- Create standardized settings pages
-        PeaversCommons.SettingsUI:CreateSettingsPages(
-            PIL,                     -- Addon reference
-            "PeaversItemLevel",      -- Addon name
-            "Peavers Item Level",    -- Display title
-            "Tracks and displays item levels for group members.", -- Description
-            {   -- Slash commands
-                "/pil - Toggle display",
-                "/pil config - Open settings"
-            }
-        )
+    -- Register PIL-specific event handlers
+    PeaversCommons.Events:RegisterEvent("GROUP_ROSTER_UPDATE", function()
+        PIL.Players:ScanGroup()
+        PIL.BarManager:UpdateBarsWithSorting()
     end)
+
+    PeaversCommons.Events:RegisterEvent("UNIT_NAME_UPDATE", function(event, unit)
+        if unit and (UnitInParty(unit) or UnitInRaid(unit)) then
+            PIL.BarManager:UpdateBarsWithSorting(true)
+        end
+    end)
+
+    PeaversCommons.Events:RegisterEvent("UNIT_INVENTORY_CHANGED", function()
+        PIL.BarManager:UpdateBarsWithSorting()
+    end)
+
+    PeaversCommons.Events:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", function()
+        PIL.BarManager:UpdateBarsWithSorting()
+    end)
+
+    PeaversCommons.Events:RegisterEvent("INSPECT_READY", function()
+        PIL.BarManager:UpdateBarsWithSorting()
+    end)
+
+    PeaversCommons.Events:RegisterEvent("PLAYER_REGEN_ENABLED", function()
+        -- Additional PIL-specific: refresh combat cache after combat
+        PIL.Players:UpdateCombatCache()
+        PIL.BarManager:UpdateBarsWithSorting(true)
+    end)
+
+    -- Set up OnUpdate handler
+    PeaversCommons.Events:RegisterOnUpdate(1.0, function(elapsed)
+        local interval = PIL.Core.inCombat and PIL.Config.combatUpdateInterval or 3.0
+        PIL.BarManager:UpdateAllBars(false, not PIL.Core.inCombat)
+    end, "PIL_Update")
+
+    -- Create settings pages
+    AddonInit:CreateSettingsPages(
+        PIL,
+        "PeaversItemLevel",
+        "Peavers Item Level",
+        "Tracks and displays item levels for group members.",
+        {"/pil - Toggle display", "/pil config - Open settings"}
+    )
 end, {
     suppressAnnouncement = true
 })

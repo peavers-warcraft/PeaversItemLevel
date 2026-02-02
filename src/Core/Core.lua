@@ -7,11 +7,8 @@ Core.inCombat = false
 
 -- Sets up the addon's main frame and components
 function Core:Initialize()
-	-- PlayerData is already initialized by Main.lua before this is called
-	-- Initialize Players module for backward compatibility
-	if PIL.Players and PIL.Players.Initialize then
-		PIL.Players:Initialize()
-	end
+	-- Initialize player tracking
+	PIL.Players:Initialize()
 
 	self.frame = CreateFrame("Frame", "PeaversItemLevelFrame", UIParent, "BackdropTemplate")
 	self.frame:SetSize(PIL.Config.frameWidth, PIL.Config.frameHeight)
@@ -58,7 +55,7 @@ function Core:UpdateFrameLock()
 	local PeaversCommons = _G.PeaversCommons
 	PeaversCommons.FrameLock:ApplyFromConfig(
 		self.frame,
-		nil,  -- No content frame dragging for PIL
+		self.contentFrame,
 		PIL.Config,
 		function() PIL.Config:Save() end
 	)
@@ -81,33 +78,8 @@ end
 
 -- Updates frame visibility based on display mode and combat state
 function Core:UpdateFrameVisibility()
-	if not self.frame then return end
-
-	local inCombat = self.inCombat or InCombatLockdown()
-	local isInParty = IsInGroup() and not IsInRaid()
-	local isInRaid = IsInRaid()
-	local shouldShow = false
-
-	-- First check if we should show based on display mode
-	if PIL.Config.displayMode == "ALWAYS" then
-		shouldShow = true
-	elseif PIL.Config.displayMode == "PARTY_ONLY" and isInParty then
-		shouldShow = true
-	elseif PIL.Config.displayMode == "RAID_ONLY" and isInRaid then
-		shouldShow = true
-	end
-
-	-- Then check if we should hide based on combat state
-	if shouldShow and PIL.Config.hideOutOfCombat and not inCombat then
-		shouldShow = false
-	end
-
-	-- Apply visibility
-	if shouldShow and PIL.Config.showOnLogin then
-		self.frame:Show()
-	else
-		self.frame:Hide()
-	end
+	local PeaversCommons = _G.PeaversCommons
+	PeaversCommons.VisibilityManager:UpdateVisibility(self.frame, PIL.Config, self.inCombat)
 end
 
 return Core
