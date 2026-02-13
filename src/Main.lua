@@ -19,6 +19,9 @@ local success = AddonInit:Setup(PIL, addonName, {
 
 if not success then return end
 
+-- Expose addon namespace globally for PeaversUISetup integration
+_G.PeaversItemLevel = PIL
+
 -- Initialize addon using the PeaversCommons Events module
 PeaversCommons.Events:Init(addonName, function()
     -- Initialize configuration
