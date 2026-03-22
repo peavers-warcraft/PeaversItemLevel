@@ -66,7 +66,7 @@ PeaversCommons.Events:Init(addonName, function()
     -- Register PIL-specific event handlers
     PeaversCommons.Events:RegisterEvent("GROUP_ROSTER_UPDATE", function()
         PIL.Players:ScanGroup()
-        PIL.BarManager:UpdateBarsWithSorting()
+        PIL.BarManager:UpdateBarsWithSorting(true)
     end)
 
     PeaversCommons.Events:RegisterEvent("UNIT_NAME_UPDATE", function(event, unit)
