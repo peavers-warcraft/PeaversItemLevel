@@ -44,6 +44,11 @@ function PIL.BarPool:Acquire(parent, name, unit)
     end
     bar._poolKey = unit
 
+    -- Ensure bar is visible (Release hides bars, Acquire must show them)
+    if bar.frame then
+        bar.frame:Show()
+    end
+
     return bar
 end
 
