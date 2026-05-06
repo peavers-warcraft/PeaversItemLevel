@@ -107,6 +107,18 @@ PeaversCommons.Events:Init(addonName, function()
         "Tracks and displays item levels for group members.",
         {"/pil - Toggle display", "/pil config - Open settings"}
     )
+    -- Register with PeaversConfig registry
+    if PeaversCommons.ConfigRegistry then
+        PeaversCommons.ConfigRegistry:Register({
+            name = "PeaversItemLevel",
+            displayName = "Item Level",
+            description = "Item level display for group members",
+            addonRef = PIL,
+            config = PIL.Config,
+            pages = PIL.ConfigUI:GetPages(),
+            order = 3,
+        })
+    end
 end, {
     suppressAnnouncement = true
 })

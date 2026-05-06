@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- PeaversItemLevel Configuration
--- Uses PeaversCommons.ConfigManager for configuration management
+-- Uses PeaversCommons.ConfigManager with AceDB-3.0 for profile management
 --------------------------------------------------------------------------------
 
 local addonName, PIL = ...
@@ -32,11 +32,20 @@ local PIL_DEFAULTS = {
     groupByRole = false,
 }
 
--- Create the config using ConfigManager (global settings, not per-character)
-PIL.Config = ConfigManager:New(
+-- Create the AceDB-backed config
+PIL.Config = ConfigManager:NewWithAceDB(
     PIL,
     PIL_DEFAULTS,
-    { savedVariablesName = "PeaversItemLevelDB" }
+    {
+        savedVariablesName = "PeaversItemLevelDB",
+        profileType = "shared",
+        onProfileChanged = function()
+            if PIL.BarManager and PIL.Core and PIL.Core.contentFrame then
+                PIL.BarManager:CreateBars(PIL.Core.contentFrame)
+                PIL.Core:AdjustFrameHeight()
+            end
+        end,
+    }
 )
 
 local Config = PIL.Config
@@ -45,49 +54,12 @@ local Config = PIL.Config
 -- PIL-Specific Methods
 --------------------------------------------------------------------------------
 
--- Override Initialize to handle PIL-specific defaults
-local baseInitialize = Config.Initialize
-function Config:Initialize()
-    baseInitialize(self)
-
-    -- Ensure item level stat is in the showStats table
+function Config:InitializeStatSettings()
     if not self.showStats then
         self.showStats = {}
     end
     if self.showStats["ITEM_LEVEL"] == nil then
         self.showStats["ITEM_LEVEL"] = true
-    end
-
-    -- Ensure PIL-specific defaults are set
-    if self.ilvlStepPercentage == nil then
-        self.ilvlStepPercentage = 2.0
-    end
-    if self.sortOption == nil then
-        self.sortOption = "NAME_ASC"
-    end
-    if self.groupByRole == nil then
-        self.groupByRole = false
-    end
-    if self.displayMode == nil then
-        self.displayMode = "ALWAYS"
-    end
-
-    self:Save()
-end
-
--- LoadSettings helper for backwards compatibility (used by some UI code)
-function Config:LoadSettings(source)
-    if not source then return end
-
-    for k, v in pairs(source) do
-        if k ~= "LoadSettings" and type(v) ~= "function" then
-            self[k] = v
-        end
-    end
-
-    -- Handle old sortByIlvl migration
-    if source.sortByIlvl ~= nil and source.sortOption == nil then
-        self.sortOption = source.sortByIlvl and "ILVL_DESC" or "NAME_ASC"
     end
 end
 
