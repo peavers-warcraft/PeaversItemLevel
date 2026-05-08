@@ -99,14 +99,9 @@ PeaversCommons.Events:Init(addonName, function()
         PIL.BarManager:UpdateAllBars(false, not PIL.Core.inCombat)
     end, "PIL_Update")
 
-    -- Create settings pages
-    AddonInit:CreateSettingsPages(
-        PIL,
-        "PeaversItemLevel",
-        "Peavers Item Level",
-        "Tracks and displays item levels for group members.",
-        {"/pil - Toggle display", "/pil config - Open settings"}
-    )
+    C_Timer.After(0.5, function()
+        PeaversCommons.SettingsUI:CreateRedirectPage(PIL, "PeaversItemLevel", "Peavers Item Level")
+    end)
     -- Register with PeaversConfig registry
     if PeaversCommons.ConfigRegistry then
         PeaversCommons.ConfigRegistry:Register({
