@@ -18,8 +18,9 @@ A World of Warcraft addon that displays player item levels in a movable frame fo
 ## Installation
 
 1. Download from [CurseForge](https://www.curseforge.com/wow/addons/peaversitemlevel)
-2. Ensure PeaversCommons is also installed
-3. Enable the addon on the character selection screen
+2. Ensure [PeaversCommons](https://www.curseforge.com/wow/addons/peaverscommons) is also installed
+3. Ensure [PeaversConfig](https://www.curseforge.com/wow/addons/peaversconfig) is also installed
+4. Enable the addon on the character selection screen
 
 ## Usage
 
@@ -42,4 +43,5 @@ Access settings through `/pil config`:
 
 ## Dependencies
 
-- PeaversCommons (required)
+- [PeaversCommons](https://www.curseforge.com/wow/addons/peaverscommons) (required)
+- [PeaversConfig](https://www.curseforge.com/wow/addons/peaversconfig) (required)
