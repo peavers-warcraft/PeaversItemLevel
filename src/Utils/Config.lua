@@ -40,10 +40,20 @@ PIL.Config = ConfigManager:NewWithAceDB(
         savedVariablesName = "PeaversItemLevelDB",
         profileType = "shared",
         onProfileChanged = function()
-            if PIL.BarManager and PIL.Core and PIL.Core.contentFrame then
+            if not PIL.Core or not PIL.Core.frame then return end
+
+            PIL.Core.frame:SetWidth(PIL.Config.frameWidth)
+            PIL.Core:ApplyFramePosition()
+
+            if PIL.BarManager and PIL.Core.contentFrame then
                 PIL.BarManager:CreateBars(PIL.Core.contentFrame)
+                PIL.BarManager:ResizeBars()
                 PIL.Core:AdjustFrameHeight()
             end
+
+            PIL.Core:UpdateTitleBarVisibility()
+            PIL.Core:UpdateFrameLock()
+            PIL.Core:UpdateFrameVisibility()
         end,
     }
 )

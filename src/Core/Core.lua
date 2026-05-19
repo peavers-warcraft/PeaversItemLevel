@@ -76,6 +76,17 @@ function Core:UpdateTitleBarVisibility()
 	end
 end
 
+function Core:ApplyFramePosition()
+	if self.frame and PIL.Config then
+		self.frame:ClearAllPoints()
+		self.frame:SetPoint(
+			PIL.Config.framePoint or "CENTER",
+			PIL.Config.frameX or 0,
+			PIL.Config.frameY or 0
+		)
+	end
+end
+
 -- Updates frame visibility based on display mode and combat state
 function Core:UpdateFrameVisibility()
 	local PeaversCommons = _G.PeaversCommons
