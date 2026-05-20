@@ -34,6 +34,27 @@ function StatBar:New(parent, name, statType)
     return obj
 end
 
+-- Rebinds a pooled bar to a new unit. Called from BarPool:Acquire so reused
+-- bars don't carry the previous occupant's name, statType (used for class
+-- color), or value-comparison state.
+function StatBar:Reset(parent, name, unit)
+    self.name = name
+    self.statType = unit
+    self.value = 0
+    self.initialized = false
+
+    if self.textManager then
+        if self.textManager.SetName then
+            self.textManager:SetName(name)
+        end
+        self:UpdateNameText()
+    end
+
+    if self.animationGroup then
+        self.animationGroup:Stop()
+    end
+end
+
 --------------------------------------------------------------------------------
 -- Color Management (PIL-specific - uses class colors)
 --------------------------------------------------------------------------------
@@ -87,8 +108,12 @@ function StatBar:CalculateBarValues(value, maxValue)
     return BaseStatBar.CalculateBarValues(self, value, maxValue)
 end
 
--- Simple display value for item level
+-- Simple display value for item level. Shows "..." while we're still waiting
+-- on inspect data so blank bars don't look broken in a freshly-formed raid.
 function StatBar:GetDisplayValue(value)
+    if not value or value <= 0 then
+        return "..."
+    end
     return tostring(math.floor(value + 0.5))
 end
 
@@ -97,8 +122,9 @@ end
 --------------------------------------------------------------------------------
 
 function StatBar:Update(value, maxValue, change, noAnimation)
-    if self.value == value then return end
+    if self.initialized and self.value == value then return end
 
+    self.initialized = true
     self.value = value or 0
 
     -- Calculate percentage based on highest item level in group
@@ -127,6 +153,20 @@ end
 --------------------------------------------------------------------------------
 -- Appearance Updates
 --------------------------------------------------------------------------------
+
+-- Sync the displayed name from bar.name before truncating. Without this,
+-- assigning bar.name = newName has no visible effect because textManager keeps
+-- its own copy of the name, only updated via SetName.
+function StatBar:UpdateNameText()
+    if self.textManager then
+        if self.textManager.SetName and self.name then
+            self.textManager:SetName(self.name)
+        end
+        if self.textManager.UpdateNameTruncation then
+            self.textManager:UpdateNameTruncation()
+        end
+    end
+end
 
 function StatBar:UpdateFont()
     self.textManager:UpdateFont(

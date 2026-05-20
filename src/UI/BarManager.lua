@@ -239,9 +239,16 @@ function BarManager:UpdateAllBars(forceUpdate, noAnimation)
     -- Use noAnimation if highest changed (prevents staggered flashing)
     local useNoAnimation = noAnimation or highestItemLevelChanged
 
+    -- Detect units that have no bar yet (e.g., raiders that joined mid-combat).
+    -- We can't rebuild during combat, so just flag it for an out-of-combat rebuild.
+    local missingBar = false
+
     -- Update all bars in the pool
     for _, unit in ipairs(PIL.PlayerData.playerOrder) do
         local bar = PIL.BarPool:GetBar(unit)
+        if not bar then
+            missingBar = true
+        end
         if bar then
             local value = PIL.PlayerData:GetItemLevel(unit)
             local previousValue = self.previousValues[unit] or 0
@@ -279,6 +286,17 @@ function BarManager:UpdateAllBars(forceUpdate, noAnimation)
     -- Update role header average item levels if grouped
     if PIL.Config.groupByRole then
         self:UpdateRoleHeaderAverages()
+    end
+
+    -- Schedule a rebuild if we noticed any unit without a bar. This recovers
+    -- from the case where a raider joins mid-combat (RebuildBars is skipped
+    -- during combat) — the next out-of-combat tick will pick them up.
+    if missingBar and not inCombat then
+        if PIL.UpdateCoordinator then
+            PIL.UpdateCoordinator:ScheduleUpdate("fullRebuild")
+        else
+            self:RebuildBars()
+        end
     end
 end
 

@@ -33,19 +33,21 @@ PIL.BarPool = PeaversCommons.BarPool:New({
     end,
 })
 
--- Add PIL-specific Acquire that calls Reset with proper params
+-- Add PIL-specific Acquire that rebinds the bar to the requested unit.
+-- We can't gate on `_poolKey ~= unit` here because baseAcquire sets _poolKey
+-- to the new unit before we see the bar — so the comparison was always true.
+-- Always Reset on Acquire instead; it's cheap and guarantees the bar's
+-- name/statType/value reflect the current occupant.
 local baseAcquire = PIL.BarPool.Acquire
 function PIL.BarPool:Acquire(parent, name, unit)
     local bar = baseAcquire(self, parent, name, unit)
 
-    -- If bar was reused, reset it with new values
-    if bar._poolKey ~= unit and bar.Reset then
+    if bar and bar.Reset then
         bar:Reset(parent, name, unit)
     end
-    bar._poolKey = unit
 
     -- Ensure bar is visible (Release hides bars, Acquire must show them)
-    if bar.frame then
+    if bar and bar.frame then
         bar.frame:Show()
     end
 
