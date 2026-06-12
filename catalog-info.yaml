@@ -1,0 +1,11 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: PeaversItemLevel
+  description: "A World of Warcraft addon that displays player item levels in a movable frame for quick assessment of your group or raid."
+  annotations:
+    github.com/project-slug: peavers-warcraft/PeaversItemLevel
+spec:
+  type: library
+  lifecycle: production
+  owner: peavers-warcraft
