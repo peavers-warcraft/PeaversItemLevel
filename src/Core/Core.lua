@@ -40,7 +40,7 @@ function Core:Initialize()
 
 	self:UpdateFrameLock()
 
- 	-- Determine initial visibility based on settings
+	-- Determine initial visibility based on settings
 	self:UpdateFrameVisibility()
 end
 

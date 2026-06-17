@@ -1,6 +1,5 @@
 local _, PIL = ...
 local Config = PIL.Config
-local UI = PIL.UI
 
 local ConfigUI = {}
 PIL.ConfigUI = ConfigUI
@@ -13,7 +12,6 @@ end
 
 local SettingsObjects = PeaversCommons.SettingsObjects
 local W = PeaversCommons.Widgets
-local C = W.Colors
 local ConfigUIUtils = PeaversCommons.ConfigUIUtils
 
 local function RefreshBars()

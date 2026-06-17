@@ -95,7 +95,6 @@ PeaversCommons.Events:Init(addonName, function()
 
     -- Set up OnUpdate handler
     PeaversCommons.Events:RegisterOnUpdate(1.0, function(elapsed)
-        local interval = PIL.Core.inCombat and PIL.Config.combatUpdateInterval or 3.0
         PIL.BarManager:UpdateAllBars(false, not PIL.Core.inCombat)
     end, "PIL_Update")
 

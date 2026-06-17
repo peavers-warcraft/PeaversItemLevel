@@ -130,7 +130,7 @@ function BarManager:RebuildBars()
                 local avgItemLevel = PIL.PlayerData:CalculateAverageItemLevel(players)
 
                 -- Create role header with average item level
-                local header = self:CreateRoleHeader(parent, role, yOffset, avgItemLevel)
+                self:CreateRoleHeader(parent, role, yOffset, avgItemLevel)
 
                 -- Update yOffset for the first bar after the header
                 if PIL.Config.barSpacing == 0 then
