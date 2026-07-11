@@ -38,6 +38,7 @@ Access settings through `/pil config`:
 - **Combat Mode**: Show only during combat
 <!-- /peavers:configuration -->
 
+
 ## Installation
 
 ### Recommended: PeaversUpdater
