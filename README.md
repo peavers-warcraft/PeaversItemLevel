@@ -1,6 +1,6 @@
 # PeaversItemLevel
 
-[![AddonSentry](https://api.addonsentry.io/api/public/repos/peavers-warcraft/PeaversItemLevel/badge.svg)](https://addonsentry.io/dashboard/peavers-warcraft/PeaversItemLevel)
+[![AddonSentry](https://addonsentry.io/api/public/repos/peavers-warcraft/PeaversItemLevel/badge.svg)](https://addonsentry.io/dashboard/peavers-warcraft/PeaversItemLevel)
 
 A World of Warcraft addon that displays player item levels in a movable frame for quick assessment of your group or raid.
 
