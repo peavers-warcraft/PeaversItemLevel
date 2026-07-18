@@ -12,7 +12,14 @@ local PeaversCommons = _G.PeaversCommons
 -- Create PIL's update coordinator using Commons
 PIL.UpdateCoordinator = PeaversCommons.UpdateCoordinator:New({
     debounceInterval = 0.1,
-    combatBehavior = "dataRefreshOnly",
+
+    -- "normal", not "dataRefreshOnly". Under dataRefreshOnly, fullRebuild and
+    -- sortRequired were deferred to the end of combat - so GROUP_ROSTER_UPDATE
+    -- for someone joining mid-pull never ran ScanGroup, and they got no bar and
+    -- no inspect until the fight ended. None of this addon's work is protected
+    -- (plain frames, no secure templates, no secret-tagged APIs), so there is
+    -- nothing to defer.
+    combatBehavior = "normal",
 
     updateHandlers = {
         fullRebuild = function()

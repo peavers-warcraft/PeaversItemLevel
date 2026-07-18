@@ -52,6 +52,28 @@ PlayerData.CLASS_COLORS = {
     ["EVOKER"] = { 0.20, 0.58, 0.50 }
 }
 
+-- Blizzard's secret-value system (C_Secrets) can make some unit queries
+-- unreadable. There is no predicate for item level - the restricted set is
+-- auras, power, cooldowns, casts, threat, UnitStat and unit *identity*. So the
+-- only thing this addon needs to guard is the UnitGUID/UnitIsUnit reads the
+-- inspect engine keys everything on.
+--
+-- This is deliberately a per-unit check rather than a blanket "are we in
+-- combat" gate: combat by itself restricts nothing we use.
+function PlayerData:CanReadIdentity(unit)
+    if not unit then return false end
+
+    -- Older clients (and Classic) have no secret restrictions at all
+    if not C_Secrets or not C_Secrets.HasSecretRestrictions then return true end
+    if not C_Secrets.HasSecretRestrictions() then return true end
+
+    if C_Secrets.ShouldUnitIdentityBeSecret and C_Secrets.ShouldUnitIdentityBeSecret(unit) then
+        return false
+    end
+
+    return true
+end
+
 -- Helper function to get effective item level with backward compatibility
 function PlayerData:GetEffectiveItemLevel(itemLink)
     if not itemLink then return nil end
@@ -83,6 +105,10 @@ end
 -- inherits the previous occupant's name, class and item level until their
 -- own inspect lands.
 function PlayerData:SyncUnitIdentity(unit)
+    if not self:CanReadIdentity(unit) then
+        return self.unitGuids[unit]
+    end
+
     local guid = UnitGUID(unit)
 
     if self.unitGuids[unit] ~= guid then
@@ -102,14 +128,14 @@ function PlayerData:GetCachedItemLevel(guid)
     return entry and entry.itemLevel or nil
 end
 
--- Get item level for a unit (combat-safe)
+-- Get item level for a unit
+--
+-- This used to fork to a frozen combat snapshot "to avoid secret value
+-- comparison errors", but every value here is a plain number this addon stored
+-- itself - no API call, nothing secret. The fork only meant that anything
+-- learned during a pull stayed invisible until combat ended.
 function PlayerData:GetItemLevel(unit)
     if not unit then return 0 end
-
-    -- During combat, return cached values only to avoid secret value comparison errors
-    if InCombatLockdown() then
-        return self.combatSnapshot[unit] or 0
-    end
 
     -- Return from cache if available
     if self.cache[unit] and self.cache[unit].itemLevel then
@@ -263,10 +289,8 @@ function PlayerData:ScanGroup()
         end
     end
 
-    -- Sort players based on configuration (skip during combat)
-    if not InCombatLockdown() then
-        self:SortPlayerOrder()
-    end
+    -- Sorting is pure arithmetic over cached numbers, so it is safe in combat
+    self:SortPlayerOrder()
 
     -- Queue inspections. Players we have never seen go to the front so a
     -- single person joining a full raid resolves in well under a second
@@ -320,11 +344,6 @@ end
 
 -- Recalculate the highest item level in the group
 function PlayerData:RecalculateHighest()
-    -- During combat, don't recalculate
-    if InCombatLockdown() then
-        return
-    end
-
     local highest = 0
     for _, unit in ipairs(self.playerOrder) do
         local itemLevel = self:GetItemLevel(unit)
@@ -336,15 +355,10 @@ function PlayerData:RecalculateHighest()
     self.highestItemLevel = highest
 end
 
--- Gets the highest item level in the group (combat-safe)
+-- Gets the highest item level in the group
 function PlayerData:GetHighestItemLevel()
-    -- During combat, return cached highest item level
-    if InCombatLockdown() then
-        return math.max(1, self.highestItemLevel or 0)
-    end
-
     -- Ensure we always return at least 1 to avoid division by zero
-    return math.max(1, self.highestItemLevel)
+    return math.max(1, self.highestItemLevel or 0)
 end
 
 -- Refresh combat cache with fresh values
@@ -461,9 +475,9 @@ function PlayerData:InspectTick()
         self:RetryInspect(timedOut)
     end
 
-    if InCombatLockdown() then
-        return self:ScheduleInspectTick(1.0)
-    end
+    -- Note: no combat gate. NotifyInspect is neither protected nor covered by
+    -- any C_Secrets predicate, so inspecting during a pull is legal - and it is
+    -- exactly when it matters, since raids pull seconds after the roster settles.
 
     -- Don't fight the user's own inspect window for the shared inspect slot
     if InspectFrame and InspectFrame:IsShown() then
@@ -492,7 +506,11 @@ function PlayerData:InspectTick()
         -- Resolve the token again: it may have shifted since we queued
         local unit = self:ResolveUnitForGuid(entry.guid) or entry.unit
 
-        if UnitGUID(unit) ~= entry.guid then
+        if not self:CanReadIdentity(unit) then
+            -- Identity is secret for this unit right now; retry later rather
+            -- than comparing against a secret value
+            self:RetryInspect(entry)
+        elseif UnitGUID(unit) ~= entry.guid then
             -- Player left the group; drop them
         elseif not (UnitExists(unit) and UnitIsConnected(unit) and CanInspect(unit)) then
             self:RetryInspect(entry)
@@ -515,7 +533,7 @@ end
 -- otherwise sit at 0 for the whole night. Cheap: it only queues units that
 -- are both unknown and currently in range.
 function PlayerData:SweepMissingItemLevels()
-    if InCombatLockdown() or self.pendingInspect then return end
+    if self.pendingInspect then return end
 
     for _, unit in ipairs(self.playerOrder) do
         if not UnitIsUnit(unit, "player")
@@ -533,7 +551,7 @@ end
 -- Map a GUID back to a current unit token
 function PlayerData:ResolveUnitForGuid(guid)
     for _, unit in ipairs(self.playerOrder) do
-        if UnitGUID(unit) == guid then
+        if self:CanReadIdentity(unit) and UnitGUID(unit) == guid then
             return unit
         end
     end
@@ -551,11 +569,6 @@ function PlayerData:OnInspectReady(event, guid)
     if self.pendingInspect and self.pendingInspect.guid == guid then
         pending = self.pendingInspect
         self.pendingInspect = nil
-    end
-
-    -- Skip processing during combat
-    if InCombatLockdown() then
-        return
     end
 
     local unit = self:ResolveUnitForGuid(guid)

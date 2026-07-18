@@ -222,25 +222,24 @@ end
 
 -- Updates all player bars with latest item levels
 function BarManager:UpdateAllBars(forceUpdate, noAnimation)
+    -- These bars are plain "Frame"s, not secure/protected frames, so combat
+    -- restricts nothing here. The only thing we still suppress in combat is
+    -- animation, to keep the frame visually quiet during a pull.
     local inCombat = InCombatLockdown()
     local highestItemLevelChanged = false
 
-    -- Skip highest item level change detection during combat
-    if not inCombat then
-        local previousHighestItemLevel = self.previousHighestItemLevel or 0
-        local currentHighestItemLevel = PIL.PlayerData:GetHighestItemLevel()
+    local previousHighestItemLevel = self.previousHighestItemLevel or 0
+    local currentHighestItemLevel = PIL.PlayerData:GetHighestItemLevel()
 
-        if currentHighestItemLevel ~= previousHighestItemLevel then
-            highestItemLevelChanged = true
-            self.previousHighestItemLevel = currentHighestItemLevel
-        end
+    if currentHighestItemLevel ~= previousHighestItemLevel then
+        highestItemLevelChanged = true
+        self.previousHighestItemLevel = currentHighestItemLevel
     end
 
-    -- Use noAnimation if highest changed (prevents staggered flashing)
-    local useNoAnimation = noAnimation or highestItemLevelChanged
+    -- Suppress animation in combat, and when the scale changed underneath us
+    local useNoAnimation = noAnimation or highestItemLevelChanged or inCombat
 
-    -- Detect units that have no bar yet (e.g., raiders that joined mid-combat).
-    -- We can't rebuild during combat, so just flag it for an out-of-combat rebuild.
+    -- Detect units that have no bar yet (e.g., raiders that joined mid-combat)
     local missingBar = false
 
     -- Update all bars in the pool
@@ -262,12 +261,9 @@ function BarManager:UpdateAllBars(forceUpdate, noAnimation)
 
             -- Determine if this bar needs updating
             local valueChanged = (value ~= previousValue)
-            local needsUpdate = forceUpdate or highestItemLevelChanged or (valueChanged and not inCombat)
+            local needsUpdate = forceUpdate or highestItemLevelChanged or valueChanged
 
-            if inCombat then
-                -- During combat: always update with cached values, no animation
-                bar:Update(value, nil, 0, true)
-            elseif needsUpdate then
+            if needsUpdate then
                 local change = valueChanged and (value - previousValue) or 0
                 bar:Update(value, nil, change, useNoAnimation)
 
@@ -276,8 +272,7 @@ function BarManager:UpdateAllBars(forceUpdate, noAnimation)
                 end
             end
 
-            -- Store value for next comparison (skip during combat)
-            if not inCombat and valueChanged then
+            if valueChanged then
                 self.previousValues[unit] = value
             end
         end
@@ -288,10 +283,10 @@ function BarManager:UpdateAllBars(forceUpdate, noAnimation)
         self:UpdateRoleHeaderAverages()
     end
 
-    -- Schedule a rebuild if we noticed any unit without a bar. This recovers
-    -- from the case where a raider joins mid-combat (RebuildBars is skipped
-    -- during combat) — the next out-of-combat tick will pick them up.
-    if missingBar and not inCombat then
+    -- Rebuild immediately for any unit without a bar. This is what makes a
+    -- raider who joins mid-pull actually show up, instead of staying invisible
+    -- until combat drops.
+    if missingBar then
         if PIL.UpdateCoordinator then
             PIL.UpdateCoordinator:ScheduleUpdate("fullRebuild")
         else
@@ -403,12 +398,6 @@ end
 
 -- Backward compatibility: UpdateBarsWithSorting delegates to appropriate methods
 function BarManager:UpdateBarsWithSorting(forceUpdate)
-    -- During combat, skip full sorting
-    if InCombatLockdown() then
-        self:UpdateAllBars(forceUpdate, true)
-        return
-    end
-
     -- Use UpdateCoordinator if available
     if PIL.UpdateCoordinator then
         if forceUpdate then
