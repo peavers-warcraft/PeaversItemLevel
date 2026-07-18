@@ -3,20 +3,37 @@ local addonName, PIL = ...
 -- Initialize PlayerData namespace for unified data cache
 PIL.PlayerData = {
     cache = {},              -- unit -> {name, class, role, itemLevel}
+    guidCache = {},          -- guid -> {itemLevel, scannedAt} - survives roster changes
+    unitGuids = {},          -- unit -> guid, to detect a token changing occupant
     playerOrder = {},        -- Sorted unit list
     highestItemLevel = 0,
     combatSnapshot = {},     -- Frozen during combat
 
     -- Inspection state
-    inspectQueue = {},
-    inspectQueueSet = {},
+    inspectQueue = {},       -- Array of {guid, unit, attempts}
+    inspectDeferred = {},    -- Entries awaiting a retry pass
+    inspectQueueSet = {},    -- guid -> queue entry (live or deferred), for O(1) dedupe
     inspectTimerRunning = false,
-    lastInspect = nil,
+    pendingInspect = nil,    -- The inspect we are currently awaiting a reply for
     inspectFrame = nil,
     inspectEventRegistered = false,
 }
 
 local PlayerData = PIL.PlayerData
+
+-- Inspect pacing. Blizzard throttles NotifyInspect at roughly 0.3s; anything
+-- slower just adds dead air. A 20-man raid fills in ~7s instead of ~30s.
+local INSPECT_THROTTLE = 0.35
+-- How long to wait for INSPECT_READY before assuming the request was dropped
+-- (out of range, loading screen, phased) and retrying.
+local INSPECT_TIMEOUT = 2.0
+local INSPECT_MAX_ATTEMPTS = 3
+-- Pause before retrying units that were unreachable, so a raid-wide out-of-range
+-- burst doesn't consume every attempt in a single frame.
+local INSPECT_RETRY_DELAY = 3.0
+-- Cached item levels older than this get a background refresh, but are shown
+-- immediately in the meantime rather than rendering a 0.
+local CACHE_STALE_AFTER = 900
 
 -- Class colors for UI purposes
 PlayerData.CLASS_COLORS = {
@@ -60,6 +77,31 @@ function PlayerData:GetEffectiveItemLevel(itemLink)
     return itemLevel
 end
 
+-- Drop unit-scoped data when a token changes occupant. Raid tokens are
+-- positional: someone joining or leaving shifts everyone below them, so
+-- "raid5" routinely becomes a different player. Without this, that player
+-- inherits the previous occupant's name, class and item level until their
+-- own inspect lands.
+function PlayerData:SyncUnitIdentity(unit)
+    local guid = UnitGUID(unit)
+
+    if self.unitGuids[unit] ~= guid then
+        self.unitGuids[unit] = guid
+        self.cache[unit] = nil
+        self.combatSnapshot[unit] = nil
+    end
+
+    return guid
+end
+
+-- Look up a previously inspected item level by player identity. This is what
+-- makes a roster change cheap: someone we have seen before renders instantly
+-- instead of waiting behind the whole inspect queue.
+function PlayerData:GetCachedItemLevel(guid)
+    local entry = guid and self.guidCache[guid]
+    return entry and entry.itemLevel or nil
+end
+
 -- Get item level for a unit (combat-safe)
 function PlayerData:GetItemLevel(unit)
     if not unit then return 0 end
@@ -74,6 +116,13 @@ function PlayerData:GetItemLevel(unit)
         return self.cache[unit].itemLevel
     end
 
+    -- Fall back to what we know about this player from a previous group
+    local cached = self:GetCachedItemLevel(UnitGUID(unit))
+    if cached then
+        self:SetItemLevel(unit, cached)
+        return cached
+    end
+
     return 0
 end
 
@@ -84,6 +133,17 @@ function PlayerData:SetItemLevel(unit, itemLevel)
     end
     self.cache[unit].itemLevel = itemLevel
     self.combatSnapshot[unit] = itemLevel
+
+    -- Record against player identity so the value survives roster shuffles,
+    -- leaving and rejoining, and zoning between instances.
+    local guid = UnitGUID(unit)
+    if guid then
+        self.guidCache[guid] = {
+            itemLevel = itemLevel,
+            scannedAt = GetTime(),
+        }
+        self.unitGuids[unit] = guid
+    end
 end
 
 -- Get player name
@@ -191,15 +251,36 @@ function PlayerData:ScanGroup()
         end
     end
 
+    -- Reconcile tokens against player identity, then seed each player from the
+    -- identity cache so known players render immediately on join.
+    for _, unit in ipairs(self.playerOrder) do
+        if not UnitIsUnit(unit, "player") then
+            local guid = self:SyncUnitIdentity(unit)
+            local cached = self:GetCachedItemLevel(guid)
+            if cached then
+                self:SetItemLevel(unit, cached)
+            end
+        end
+    end
+
     -- Sort players based on configuration (skip during combat)
     if not InCombatLockdown() then
         self:SortPlayerOrder()
     end
 
-    -- Queue all players for inspection to ensure item levels are updated
+    -- Queue inspections. Players we have never seen go to the front so a
+    -- single person joining a full raid resolves in well under a second
+    -- instead of queueing behind 39 pointless re-inspects.
     for _, unit in ipairs(self.playerOrder) do
         if not UnitIsUnit(unit, "player") and CanInspect(unit) then
-            self:QueueInspect(unit)
+            local guid = UnitGUID(unit)
+            local entry = guid and self.guidCache[guid]
+
+            if not entry then
+                self:QueueInspect(unit, true)
+            elseif (GetTime() - entry.scannedAt) > CACHE_STALE_AFTER then
+                self:QueueInspect(unit, false)
+            end
         end
     end
 
@@ -280,107 +361,204 @@ function PlayerData:RefreshCombatCache()
     end
 end
 
--- Queue a unit for inspection
-function PlayerData:QueueInspect(unit)
-    -- O(1) lookup instead of O(n) linear search
-    if self.inspectQueueSet[unit] then
+-- Queue a unit for inspection. Pass priority=true to jump the queue, which is
+-- what a newly joined player gets.
+function PlayerData:QueueInspect(unit, priority)
+    local guid = UnitGUID(unit)
+    if not guid then return end
+
+    -- Dedupe on identity, not token, so a shuffled roster can't double-queue
+    -- the same player under two names.
+    local existing = self.inspectQueueSet[guid]
+    if existing then
+        -- Keep the token current; the old one may now point at someone else
+        existing.unit = unit
         return
     end
 
-    table.insert(self.inspectQueue, unit)
-    self.inspectQueueSet[unit] = true
+    local entry = { guid = guid, unit = unit, attempts = 0 }
+    self.inspectQueueSet[guid] = entry
+
+    if priority then
+        table.insert(self.inspectQueue, 1, entry)
+    else
+        table.insert(self.inspectQueue, entry)
+    end
 
     -- Create the event frame if it doesn't exist
     if not self.inspectFrame then
         self.inspectFrame = CreateFrame("Frame")
     end
 
-    -- Start processing queue with C_Timer
-    if not self.inspectTimerRunning then
-        self.inspectTimerRunning = true
-        self:ScheduleNextInspect()
+    -- Register for INSPECT_READY up front, so a reply can never arrive before
+    -- we are listening for it
+    if not self.inspectEventRegistered then
+        self.inspectEventRegistered = true
+        self.inspectFrame:RegisterEvent("INSPECT_READY")
+        self.inspectFrame:SetScript("OnEvent", function(frame, event, readyGuid)
+            PlayerData:OnInspectReady(event, readyGuid)
+        end)
     end
+
+    self:EnsureInspectEngine()
 end
 
--- Schedule the next inspection using C_Timer
-function PlayerData:ScheduleNextInspect()
-    local delay = 1.5
-    if self.lastInspect then
-        local elapsed = GetTime() - self.lastInspect
-        delay = math.max(0.1, 1.5 - elapsed)
-    end
+-- Start the tick chain if it isn't already running. Exactly one chain may be
+-- live at a time, otherwise the throttle no longer bounds the request rate.
+function PlayerData:EnsureInspectEngine()
+    if self.inspectTimerRunning then return end
+    self.inspectTimerRunning = true
+    self:ScheduleInspectTick(0)
+end
 
+function PlayerData:ScheduleInspectTick(delay)
     C_Timer.After(delay, function()
-        self:ProcessNextInspect()
+        self:InspectTick()
     end)
 end
 
--- Process the next unit in the inspect queue
-function PlayerData:ProcessNextInspect()
-    -- Skip inspections during combat
-    if InCombatLockdown() then
-        C_Timer.After(1.0, function()
-            if #self.inspectQueue > 0 then
-                self:ProcessNextInspect()
-            else
-                self.inspectTimerRunning = false
-            end
-        end)
+-- Hold a failed request for a later pass so out-of-range or phased players
+-- resolve when they become inspectable, instead of showing 0 forever.
+--
+-- Deferred entries deliberately do NOT go straight back onto inspectQueue:
+-- the drain loop below would pop them again in the same frame and burn every
+-- retry instantly, which is exactly what a retry is meant to avoid.
+function PlayerData:RetryInspect(entry)
+    if entry.attempts >= INSPECT_MAX_ATTEMPTS then
+        self.inspectQueueSet[entry.guid] = nil
         return
     end
 
-    -- Check if queue is empty
-    if #self.inspectQueue == 0 then
-        self.inspectTimerRunning = false
-        return
+    table.insert(self.inspectDeferred, entry)
+    self.inspectQueueSet[entry.guid] = entry
+end
+
+-- Move deferred retries back onto the live queue
+function PlayerData:PromoteDeferredInspects()
+    if #self.inspectDeferred == 0 then return false end
+
+    for _, entry in ipairs(self.inspectDeferred) do
+        table.insert(self.inspectQueue, entry)
     end
+    self.inspectDeferred = {}
 
-    -- Get next unit
-    local unit = self.inspectQueue[1]
-    table.remove(self.inspectQueue, 1)
-    self.inspectQueueSet[unit] = nil
+    return true
+end
 
-    -- Process this unit if valid
-    if UnitExists(unit) and CanInspect(unit) and (not InspectFrame or not InspectFrame:IsShown()) then
-        NotifyInspect(unit)
-
-        -- Register for INSPECT_READY event if not already registered
-        if not self.inspectEventRegistered then
-            self.inspectEventRegistered = true
-            self.inspectFrame:RegisterEvent("INSPECT_READY")
-            self.inspectFrame:SetScript("OnEvent", function(frame, event, guid)
-                PlayerData:OnInspectReady(event, guid)
-            end)
+-- Drives the inspect queue: one outstanding request at a time, with a timeout
+-- so a dropped reply can't wedge the engine.
+function PlayerData:InspectTick()
+    -- Still waiting on a reply?
+    if self.pendingInspect then
+        if (GetTime() - self.pendingInspect.startedAt) < INSPECT_TIMEOUT then
+            return self:ScheduleInspectTick(0.2)
         end
 
-        self.lastInspect = GetTime()
+        -- Timed out. Release Blizzard's inspect slot and retry this player.
+        ClearInspectPlayer()
+        local timedOut = self.pendingInspect
+        self.pendingInspect = nil
+        self:RetryInspect(timedOut)
     end
 
-    -- Schedule next inspection if queue not empty
-    if #self.inspectQueue > 0 then
-        self:ScheduleNextInspect()
-    else
-        self.inspectTimerRunning = false
+    if InCombatLockdown() then
+        return self:ScheduleInspectTick(1.0)
     end
+
+    -- Don't fight the user's own inspect window for the shared inspect slot
+    if InspectFrame and InspectFrame:IsShown() then
+        return self:ScheduleInspectTick(1.0)
+    end
+
+    -- Find the next inspectable entry
+    while true do
+        local entry = table.remove(self.inspectQueue, 1)
+
+        if not entry then
+            -- Live queue drained. If anything is waiting on a retry, come back
+            -- for it after a pause rather than spinning on it now.
+            if #self.inspectDeferred > 0 then
+                self:PromoteDeferredInspects()
+                return self:ScheduleInspectTick(INSPECT_RETRY_DELAY)
+            end
+
+            self.inspectTimerRunning = false
+            return
+        end
+
+        self.inspectQueueSet[entry.guid] = nil
+        entry.attempts = entry.attempts + 1
+
+        -- Resolve the token again: it may have shifted since we queued
+        local unit = self:ResolveUnitForGuid(entry.guid) or entry.unit
+
+        if UnitGUID(unit) ~= entry.guid then
+            -- Player left the group; drop them
+        elseif not (UnitExists(unit) and UnitIsConnected(unit) and CanInspect(unit)) then
+            self:RetryInspect(entry)
+        elseif not UnitIsVisible(unit) then
+            -- Inspect only works within ~100 yards. Requesting anyway would
+            -- burn the throttle window on a request that can never reply.
+            self:RetryInspect(entry)
+        else
+            entry.unit = unit
+            entry.startedAt = GetTime()
+            self.pendingInspect = entry
+            NotifyInspect(unit)
+            return self:ScheduleInspectTick(INSPECT_THROTTLE)
+        end
+    end
+end
+
+-- Re-queue anyone still missing an item level. Inspect only reaches ~100
+-- yards, so raiders who were across the zone when we first tried would
+-- otherwise sit at 0 for the whole night. Cheap: it only queues units that
+-- are both unknown and currently in range.
+function PlayerData:SweepMissingItemLevels()
+    if InCombatLockdown() or self.pendingInspect then return end
+
+    for _, unit in ipairs(self.playerOrder) do
+        if not UnitIsUnit(unit, "player")
+            and UnitExists(unit)
+            and UnitIsConnected(unit)
+            and UnitIsVisible(unit)
+            and CanInspect(unit)
+            and not self:GetCachedItemLevel(UnitGUID(unit))
+        then
+            self:QueueInspect(unit, false)
+        end
+    end
+end
+
+-- Map a GUID back to a current unit token
+function PlayerData:ResolveUnitForGuid(guid)
+    for _, unit in ipairs(self.playerOrder) do
+        if UnitGUID(unit) == guid then
+            return unit
+        end
+    end
+    return nil
 end
 
 -- Handle INSPECT_READY event
 function PlayerData:OnInspectReady(event, guid)
     if event ~= "INSPECT_READY" then return end
 
+    -- If this is the reply we were waiting on, clear the pending slot. The
+    -- running tick chain picks the next entry up on its own; scheduling another
+    -- tick here would fork a second chain and double the request rate.
+    local pending = nil
+    if self.pendingInspect and self.pendingInspect.guid == guid then
+        pending = self.pendingInspect
+        self.pendingInspect = nil
+    end
+
     -- Skip processing during combat
     if InCombatLockdown() then
         return
     end
 
-    -- Find the unit with this GUID
-    local unit = nil
-    for _, u in ipairs(self.playerOrder) do
-        if UnitGUID(u) == guid then
-            unit = u
-            break
-        end
-    end
+    local unit = self:ResolveUnitForGuid(guid)
 
     if unit then
         local equipped = 0
@@ -413,6 +591,10 @@ function PlayerData:OnInspectReady(event, guid)
             end
         end
 
+        -- Release Blizzard's inspect slot as soon as we have read the data.
+        -- Leaving it held is what makes later inspects silently no-op.
+        ClearInspectPlayer()
+
         -- Only update if we got valid data
         if equipped > 0 then
             self:SetItemLevel(unit, equipped)
@@ -429,6 +611,11 @@ function PlayerData:OnInspectReady(event, guid)
             if PIL.UpdateCoordinator then
                 PIL.UpdateCoordinator:ScheduleUpdate("sortRequired")
             end
+        elseif pending then
+            -- Reply arrived but the gear data was not populated yet; try again,
+            -- preserving the attempt count so this can't loop forever
+            self:RetryInspect(pending)
+            self:EnsureInspectEngine()
         end
     end
 end
@@ -486,6 +673,24 @@ function PlayerData:CleanupCache()
         if not validUnits[unit] then
             self.cache[unit] = nil
             self.combatSnapshot[unit] = nil
+            self.unitGuids[unit] = nil
+        end
+    end
+
+    -- guidCache is deliberately NOT cleared here: keeping item levels for
+    -- players who have left is what makes them render instantly if they come
+    -- back. Trim it only when it grows past a few raids' worth of players.
+    local count = 0
+    for _ in pairs(self.guidCache) do
+        count = count + 1
+    end
+
+    if count > 500 then
+        local cutoff = GetTime() - CACHE_STALE_AFTER
+        for guid, entry in pairs(self.guidCache) do
+            if entry.scannedAt < cutoff then
+                self.guidCache[guid] = nil
+            end
         end
     end
 end

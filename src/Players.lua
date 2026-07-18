@@ -85,8 +85,8 @@ function Players:UpdateCombatCache()
 end
 
 -- Queue a unit for inspection (delegates to PlayerData)
-function Players:QueueInspect(unit)
-    PIL.PlayerData:QueueInspect(unit)
+function Players:QueueInspect(unit, priority)
+    PIL.PlayerData:QueueInspect(unit, priority)
 end
 
 return Players

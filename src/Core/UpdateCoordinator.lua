@@ -57,9 +57,21 @@ function PIL.UpdateCoordinator:Initialize()
         end
     end)
 
-    -- Equipment changed
-    Events:RegisterEvent("UNIT_INVENTORY_CHANGED", function()
+    -- Equipment changed. Refreshing bars alone only re-renders the cached
+    -- value, so the unit has to be re-inspected for the new gear to show.
+    Events:RegisterEvent("UNIT_INVENTORY_CHANGED", function(event, unit)
+        if unit and not UnitIsUnit(unit, "player")
+            and (UnitInParty(unit) or UnitInRaid(unit)) and CanInspect(unit) then
+            PIL.PlayerData:QueueInspect(unit, true)
+        end
         self:ScheduleUpdate("dataRefresh")
+    end)
+
+    -- A player reconnecting becomes inspectable again
+    Events:RegisterEvent("UNIT_CONNECTION", function(event, unit)
+        if unit and (UnitInParty(unit) or UnitInRaid(unit)) and CanInspect(unit) then
+            PIL.PlayerData:QueueInspect(unit, false)
+        end
     end)
 
     Events:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", function()
@@ -100,6 +112,11 @@ function PIL.UpdateCoordinator:Initialize()
     Events:RegisterOnUpdate(1.0, function(elapsed)
         self:ScheduleUpdate("dataRefresh")
     end, "PIL_Update")
+
+    -- Pick up players who were out of inspect range on the first attempt
+    Events:RegisterOnUpdate(5.0, function(elapsed)
+        PIL.PlayerData:SweepMissingItemLevels()
+    end, "PIL_InspectSweep")
 end
 
 return PIL.UpdateCoordinator
