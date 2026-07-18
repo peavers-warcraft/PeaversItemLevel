@@ -223,6 +223,13 @@ end
 function PlayerData:GetRole(unit)
     if not unit then return "DAMAGER" end
 
+    -- Read a cached role if one was seeded (test mode does this). Deliberately
+    -- read-only: caching real players' roles would make a mid-group role change
+    -- stick until the cache was cleared.
+    if self.cache[unit] and self.cache[unit].role then
+        return self.cache[unit].role
+    end
+
     local role = UnitGroupRolesAssigned(unit)
 
     -- If no role is assigned or it's "NONE", default to DAMAGER
@@ -246,6 +253,9 @@ end
 
 -- Scan group and build player order
 function PlayerData:ScanGroup()
+    -- Test mode owns the roster; a real scan would wipe the preview
+    if PIL.TestMode and PIL.TestMode:IsActive() then return end
+
     -- Clear existing player order
     self.playerOrder = {}
 
@@ -331,13 +341,15 @@ function PlayerData:SortPlayerOrder()
             end)
         end
     elseif PIL.Config.sortOption == "NAME_DESC" then
+        -- GetName rather than UnitName: it is cache-first, so it also resolves
+        -- test-mode units, which no Unit* API knows about
         table.sort(self.playerOrder, function(a, b)
-            return (UnitName(a) or "") > (UnitName(b) or "")
+            return self:GetName(a) > self:GetName(b)
         end)
     else
         -- Default: Sort alphabetically by name (A to Z)
         table.sort(self.playerOrder, function(a, b)
-            return (UnitName(a) or "") < (UnitName(b) or "")
+            return self:GetName(a) < self:GetName(b)
         end)
     end
 end
@@ -378,6 +390,9 @@ end
 -- Queue a unit for inspection. Pass priority=true to jump the queue, which is
 -- what a newly joined player gets.
 function PlayerData:QueueInspect(unit, priority)
+    if PIL.TestMode and PIL.TestMode:IsActive() then return end
+
+    -- Synthetic test units have no GUID, so this also rejects them
     local guid = UnitGUID(unit)
     if not guid then return end
 
@@ -534,6 +549,7 @@ end
 -- are both unknown and currently in range.
 function PlayerData:SweepMissingItemLevels()
     if self.pendingInspect then return end
+    if PIL.TestMode and PIL.TestMode:IsActive() then return end
 
     for _, unit in ipairs(self.playerOrder) do
         if not UnitIsUnit(unit, "player")

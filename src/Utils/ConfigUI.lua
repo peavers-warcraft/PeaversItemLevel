@@ -71,6 +71,102 @@ local function GetPageOpts(parentFrame)
     return opts
 end
 
+local PARAGRAPH_GAP = 16
+local BEFORE_HEADER_GAP = 12
+
+-- There is no multi-line paragraph widget in PeaversCommons.
+--
+-- Note the explicit SetWidth rather than the TOPLEFT+TOPRIGHT anchor pair used
+-- elsewhere in the ecosystem: with dual anchors the wrap width comes from the
+-- parent's layout, which is not resolved while the tab is being built, so
+-- GetStringHeight() reports fewer lines than eventually render and the next
+-- paragraph is placed on top of this one. An explicit width makes both the
+-- wrapping and the measurement deterministic at build time.
+local function AddParagraph(parentFrame, text, indent, y, width, color)
+    local C = W.Colors
+    local fs = parentFrame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+    fs:SetPoint("TOPLEFT", indent, y)
+    fs:SetWidth(width)
+    fs:SetWordWrap(true)
+    fs:SetJustifyH("LEFT")
+    fs:SetJustifyV("TOP")
+    fs:SetSpacing(2)
+    fs:SetText(text)
+
+    color = color or C.textSec
+    fs:SetTextColor(color[1], color[2], color[3])
+
+    -- Measure only after width and text are both set
+    local height = fs:GetStringHeight() or 0
+
+    -- Floor at one line in case measurement is unavailable this frame, so a bad
+    -- read can never collapse the gap to zero and overlap the next block
+    if height < 14 then height = 14 end
+
+    fs:SetHeight(height)
+
+    return y - (height + PARAGRAPH_GAP)
+end
+
+-- Explains the one thing users consistently misread as the addon being slow:
+-- other players' item levels arrive one at a time because the game only allows
+-- one inspect request at a time. Deliberately does NOT claim a combat
+-- limitation - inspecting during combat is allowed, and this addon does it.
+function ConfigUI:BuildWelcomePage(parentFrame)
+    local y = -10
+    local opts = GetPageOpts(parentFrame)
+    local indent = opts.indent
+    local width = opts.width
+    local C = W.Colors
+
+    local function Paragraph(text, color)
+        y = AddParagraph(parentFrame, text, indent, y, width, color)
+    end
+
+    local function Section(text)
+        y = y - BEFORE_HEADER_GAP
+        local _, newY = W:CreateSectionHeader(parentFrame, text, indent, y)
+        y = newY - 10
+    end
+
+    local title = W:CreateLabel(parentFrame, "Item Level", {
+        font = "GameFontNormalLarge",
+        color = C.gold,
+    })
+    title:SetPoint("TOPLEFT", indent, y)
+    y = y - 30
+
+    Paragraph("Shows the equipped item level of everyone in your party or raid, as a " ..
+        "sorted list of bars.")
+
+    Section("Why other players fill in gradually")
+
+    Paragraph("Your own item level is available instantly. Everyone else's has to be " ..
+        "requested from the server using an inspect, and the game permits only " ..
+        "one inspect at a time with a short pause between each.")
+
+    Paragraph("This is a limit of the game itself, not of this addon - every item level " ..
+        "addon works the same way. In a party the list is effectively instant; in " ..
+        "a full raid it fills in over several seconds.")
+
+    Section("If someone shows no item level")
+
+    Paragraph("They are either still in the queue, or too far away. The game only allows " ..
+        "inspecting players who are close enough to be visible, so distant raiders " ..
+        "fill in as they get nearer.")
+
+    Section("It gets faster as you play")
+
+    Paragraph("Once a player has been seen they are remembered. If your group re-forms, " ..
+        "someone reloads, or a raider rejoins, they appear immediately instead of " ..
+        "being scanned again.")
+
+    Paragraph("Item levels also keep updating during combat, including for players who " ..
+        "join mid-pull.", C.accentLight)
+
+    parentFrame:SetHeight(math.abs(y) + 30)
+end
+
 function ConfigUI:BuildGeneralPage(parentFrame)
     local y = -10
     local opts = GetPageOpts(parentFrame)
@@ -84,13 +180,39 @@ end
 function ConfigUI:BuildBarsPage(parentFrame)
     local y = -10
     local opts = GetPageOpts(parentFrame)
+    local indent = opts.indent
+    local width = opts.width
+
+    -- Preview section first, so style changes below can be seen while solo
+    local _, previewY = W:CreateSectionHeader(parentFrame, "Preview", indent, y)
+    y = previewY - 8
+
+    local TestMode = PIL.TestMode
+    local testButton
+
+    local function TestButtonLabel()
+        return (TestMode and TestMode:IsActive()) and "Hide Example Group" or "Show Example Group"
+    end
+
+    testButton = W:CreateButton(parentFrame, TestButtonLabel(), {
+        width = 190,
+        onClick = function()
+            if not TestMode then return end
+            TestMode:Toggle()
+            testButton:SetLabel(TestButtonLabel())
+        end,
+    })
+    testButton:SetPoint("TOPLEFT", indent, y)
+    y = y - 32
+
+    y = AddParagraph(parentFrame,
+        "Fills the display with example players so you can adjust the settings " ..
+        "below without being in a group. Turns off automatically on reload.",
+        indent, y, width, W.Colors.textMuted)
 
     y = SettingsObjects.BarAppearance(parentFrame, Config, y, opts)
 
     -- Item Level Progress section
-    local indent = opts.indent
-    local width = opts.width
-
     local _, newY = W:CreateSectionHeader(parentFrame, "Item Level Progress", indent, y)
     y = newY - 8
 
@@ -172,6 +294,8 @@ end
 
 function ConfigUI:GetPages()
     return {
+        -- First entry renders leftmost and is the default-selected tab
+        { key = "welcome", label = "Welcome", builder = function(f) ConfigUI:BuildWelcomePage(f) end },
         { key = "general", label = "General", builder = function(f) ConfigUI:BuildGeneralPage(f) end },
         { key = "bars", label = "Bars", builder = function(f) ConfigUI:BuildBarsPage(f) end },
         { key = "text", label = "Text", builder = function(f) ConfigUI:BuildTextPage(f) end },

@@ -90,7 +90,15 @@ end
 -- Updates frame visibility based on display mode and combat state
 function Core:UpdateFrameVisibility()
 	local PeaversCommons = _G.PeaversCommons
-	PeaversCommons.VisibilityManager:UpdateVisibility(self.frame, PIL.Config, self.inCombat)
+
+	-- Test mode previews the display while solo, so it has to override display
+	-- modes like "party only" and "hide out of combat" that would hide it
+	if PIL.TestMode and PIL.TestMode:IsActive() then
+		if self.frame then self.frame:Show() end
+		return true
+	end
+
+	return PeaversCommons.VisibilityManager:UpdateVisibility(self.frame, PIL.Config, self.inCombat)
 end
 
 return Core

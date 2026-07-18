@@ -14,7 +14,12 @@ local success = AddonInit:Setup(PIL, addonName, {
     modules = {"Core", "UI", "Utils", "Config", "Players"},
     slashCommand = "pil",
     toggleFunctionName = "ToggleItemLevelDisplay",
-    extraSlashCommands = {}
+    extraSlashCommands = {
+        -- Toggle the example group without reopening the settings panel
+        test = function()
+            if PIL.TestMode then PIL.TestMode:Toggle() end
+        end,
+    }
 })
 
 if not success then return end

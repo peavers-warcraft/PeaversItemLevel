@@ -34,4 +34,5 @@ src\UI\TitleBar.lua
 src\UI\BarManager.lua
 
 src\Core\UpdateCoordinator.lua
+src\Core\TestMode.lua
 src\Core\Core.lua

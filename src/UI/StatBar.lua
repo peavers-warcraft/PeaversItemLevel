@@ -80,8 +80,16 @@ end
 function StatBar:UpdateColor()
     local r, g, b
 
-    -- Check if this is a unit ID (player, party1, raid1, etc.)
-    if self.statType and (UnitExists(self.statType) or self.statType == "player") then
+    -- Treat this as a player bar if the game knows the unit OR we hold cached
+    -- class data for it. The cache check covers test-mode units (which no Unit*
+    -- API recognises, so they would otherwise render a flat grey) and also keeps
+    -- a real player's class colour stable if UnitExists briefly returns false,
+    -- e.g. while they are phased or zoning.
+    local hasCachedClass = PIL.PlayerData
+        and PIL.PlayerData.cache[self.statType]
+        and PIL.PlayerData.cache[self.statType].class
+
+    if self.statType and (UnitExists(self.statType) or self.statType == "player" or hasCachedClass) then
         -- Get the class color from the Players module
         r, g, b = PIL.Players:GetColor(self.statType)
     else
