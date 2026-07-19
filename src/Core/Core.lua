@@ -10,7 +10,7 @@ function Core:Initialize()
 	-- Initialize player tracking
 	PIL.Players:Initialize()
 
-	self.frame = CreateFrame("Frame", "PeaversItemLevelFrame", UIParent, "BackdropTemplate")
+	self.frame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
 	self.frame:SetSize(PIL.Config.frameWidth, PIL.Config.frameHeight)
 	self.frame:SetBackdrop({
 		bgFile = "Interface\\BUTTONS\\WHITE8X8",
