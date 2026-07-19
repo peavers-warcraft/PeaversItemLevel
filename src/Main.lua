@@ -13,7 +13,6 @@ local AddonInit = PeaversCommons.AddonInit
 local success = AddonInit:Setup(PIL, addonName, {
     modules = {"Core", "UI", "Utils", "Config", "Players"},
     slashCommand = "pil",
-    toggleFunctionName = "ToggleItemLevelDisplay",
     extraSlashCommands = {
         -- Toggle the example group without reopening the settings panel
         test = function()
