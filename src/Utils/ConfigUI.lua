@@ -252,7 +252,7 @@ function ConfigUI:BuildBehaviorPage(parentFrame)
     local _, newY = W:CreateSectionHeader(parentFrame, "Sorting & Grouping", indent, y)
     y = newY - 8
 
-    local toggle = W:CreateToggle(parentFrame, "Group Players by Role", {
+    local toggle = W:CreateCheckbox(parentFrame, "Group Players by Role", {
         checked = Config.groupByRole or false,
         width = width,
         onChange = function(checked)
