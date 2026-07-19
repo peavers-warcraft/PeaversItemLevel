@@ -72,7 +72,6 @@ local function GetPageOpts(parentFrame)
 end
 
 local PARAGRAPH_GAP = 16
-local BEFORE_HEADER_GAP = 12
 
 -- There is no multi-line paragraph widget in PeaversCommons.
 --
@@ -112,59 +111,34 @@ end
 -- other players' item levels arrive one at a time because the game only allows
 -- one inspect request at a time. Deliberately does NOT claim a combat
 -- limitation - inspecting during combat is allowed, and this addon does it.
-function ConfigUI:BuildWelcomePage(parentFrame)
-    local y = -10
-    local opts = GetPageOpts(parentFrame)
-    local indent = opts.indent
-    local width = opts.width
+function ConfigUI:BuildInfoPage(parentFrame)
     local C = W.Colors
+    ConfigUIUtils.BuildInfoPage(parentFrame, "Item Level", {
+        "Shows the equipped item level of everyone in your party or raid, as a " ..
+            "sorted list of bars.",
+        { command = "/pil", desc = "toggle the display" },
+        { command = "/pil config", desc = "open the configuration panel" },
 
-    local function Paragraph(text, color)
-        y = AddParagraph(parentFrame, text, indent, y, width, color)
-    end
+        { header = "Why other players fill in gradually" },
+        "Your own item level is available instantly. Everyone else's has to be " ..
+            "requested from the server using an inspect, and the game permits only " ..
+            "one inspect at a time with a short pause between each.",
+        "This is a limit of the game itself, not of this addon - every item level " ..
+            "addon works the same way. In a party the list is effectively instant; in " ..
+            "a full raid it fills in over several seconds.",
 
-    local function Section(text)
-        y = y - BEFORE_HEADER_GAP
-        local _, newY = W:CreateSectionHeader(parentFrame, text, indent, y)
-        y = newY - 10
-    end
+        { header = "If someone shows no item level" },
+        "They are either still in the queue, or too far away. The game only allows " ..
+            "inspecting players who are close enough to be visible, so distant raiders " ..
+            "fill in as they get nearer.",
 
-    local title = W:CreateLabel(parentFrame, "Item Level", {
-        font = "GameFontNormalLarge",
-        color = C.gold,
+        { header = "It gets faster as you play" },
+        "Once a player has been seen they are remembered. If your group re-forms, " ..
+            "someone reloads, or a raider rejoins, they appear immediately instead of " ..
+            "being scanned again.",
+        { text = "Item levels also keep updating during combat, including for players who " ..
+            "join mid-pull.", color = C.accentLight },
     })
-    title:SetPoint("TOPLEFT", indent, y)
-    y = y - 30
-
-    Paragraph("Shows the equipped item level of everyone in your party or raid, as a " ..
-        "sorted list of bars.")
-
-    Section("Why other players fill in gradually")
-
-    Paragraph("Your own item level is available instantly. Everyone else's has to be " ..
-        "requested from the server using an inspect, and the game permits only " ..
-        "one inspect at a time with a short pause between each.")
-
-    Paragraph("This is a limit of the game itself, not of this addon - every item level " ..
-        "addon works the same way. In a party the list is effectively instant; in " ..
-        "a full raid it fills in over several seconds.")
-
-    Section("If someone shows no item level")
-
-    Paragraph("They are either still in the queue, or too far away. The game only allows " ..
-        "inspecting players who are close enough to be visible, so distant raiders " ..
-        "fill in as they get nearer.")
-
-    Section("It gets faster as you play")
-
-    Paragraph("Once a player has been seen they are remembered. If your group re-forms, " ..
-        "someone reloads, or a raider rejoins, they appear immediately instead of " ..
-        "being scanned again.")
-
-    Paragraph("Item levels also keep updating during combat, including for players who " ..
-        "join mid-pull.", C.accentLight)
-
-    parentFrame:SetHeight(math.abs(y) + 30)
 end
 
 function ConfigUI:BuildGeneralPage(parentFrame)
@@ -295,7 +269,7 @@ end
 function ConfigUI:GetPages()
     return {
         -- First entry renders leftmost and is the default-selected tab
-        { key = "welcome", label = "Welcome", builder = function(f) ConfigUI:BuildWelcomePage(f) end },
+        { key = "info", label = "Information", builder = function(f) ConfigUI:BuildInfoPage(f) end },
         { key = "general", label = "General", builder = function(f) ConfigUI:BuildGeneralPage(f) end },
         { key = "bars", label = "Bars", builder = function(f) ConfigUI:BuildBarsPage(f) end },
         { key = "text", label = "Text", builder = function(f) ConfigUI:BuildTextPage(f) end },
