@@ -1,5 +1,4 @@
 local _, PIL = ...
-local Config = PIL.Config
 
 local ConfigUI = {}
 PIL.ConfigUI = ConfigUI
@@ -10,7 +9,6 @@ if not PeaversCommons then
     return
 end
 
-local SettingsObjects = PeaversCommons.SettingsObjects
 local W = PeaversCommons.Widgets
 local ConfigUIUtils = PeaversCommons.ConfigUIUtils
 
