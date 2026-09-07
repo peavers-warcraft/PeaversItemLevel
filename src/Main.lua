@@ -64,6 +64,11 @@ PeaversCommons.Events:Init(addonName, function()
     -- Initialize core components
     PIL.Core:Initialize()
 
+    -- After Core, because it registers the frame Core builds.
+    if PIL.EditMode then
+        PIL.EditMode:Register()
+    end
+
     -- Register common events (logout save, combat visibility, group updates)
     AddonInit:RegisterCommonEvents(PIL)
 

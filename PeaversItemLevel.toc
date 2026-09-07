@@ -27,6 +27,7 @@ src\Players.lua
 src\Utils\Utils.lua
 src\Utils\Config.lua
 src\Utils\ConfigUI.lua
+src\Utils\EditMode.lua
 
 src\UI\StatBar.lua
 src\Core\BarPool.lua
